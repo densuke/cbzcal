@@ -939,14 +939,32 @@ fn validate_supported_add_input(input: &NewEvent) -> Result<()> {
 
     let starts_at = input.starts_at.with_timezone(&jst_offset());
     let ends_at = input.ends_at.with_timezone(&jst_offset());
-    if starts_at.date_naive() != ends_at.date_naive() {
-        bail!("現時点の `events add` は単日予定のみ対応です");
-    }
     if starts_at.second() != 0 || ends_at.second() != 0 {
         bail!("現時点の `events add` は分単位のみ対応です");
     }
+    if !is_supported_single_day_event(starts_at, ends_at) {
+        bail!("現時点の `events add` は単日予定のみ対応です");
+    }
 
     Ok(())
+}
+
+fn is_supported_single_day_event(
+    starts_at: DateTime<FixedOffset>,
+    ends_at: DateTime<FixedOffset>,
+) -> bool {
+    if starts_at.date_naive() == ends_at.date_naive() {
+        return true;
+    }
+
+    starts_at.hour() == 0
+        && starts_at.minute() == 0
+        && ends_at.hour() == 0
+        && ends_at.minute() == 0
+        && starts_at
+            .date_naive()
+            .checked_add_days(Days::new(1))
+            .is_some_and(|next_day| next_day == ends_at.date_naive())
 }
 
 fn parse_html_form(html: &str, page_url: &str, form_name: &str) -> Result<HtmlForm> {
@@ -1038,6 +1056,14 @@ fn populate_schedule_entry_form(
     let ends_at = input.ends_at.with_timezone(&jst_offset());
     let event_date = starts_at.date_naive();
     let bdate = week_start(event_date);
+    let is_all_day = starts_at.hour() == 0
+        && starts_at.minute() == 0
+        && ends_at.hour() == 0
+        && ends_at.minute() == 0
+        && starts_at
+            .date_naive()
+            .checked_add_days(Days::new(1))
+            .is_some_and(|next_day| next_day == ends_at.date_naive());
 
     set_form_value(fields, "page", "ScheduleEntry");
     set_form_value(fields, "UID", context.current_user_uid.clone());
@@ -1048,14 +1074,21 @@ fn populate_schedule_entry_form(
     set_form_value(fields, "SetDate.Month", starts_at.month().to_string());
     set_form_value(fields, "SetDate.Day", starts_at.day().to_string());
     set_form_value(fields, "SetMultiDates", format_da_date(event_date));
-    set_form_value(fields, "SetTime.Hour", starts_at.hour().to_string());
-    set_form_value(
-        fields,
-        "SetTime.Minute",
-        format!("{:02}", starts_at.minute()),
-    );
-    set_form_value(fields, "EndTime.Hour", ends_at.hour().to_string());
-    set_form_value(fields, "EndTime.Minute", format!("{:02}", ends_at.minute()));
+    if is_all_day {
+        set_form_value(fields, "SetTime.Hour", "");
+        set_form_value(fields, "SetTime.Minute", "");
+        set_form_value(fields, "EndTime.Hour", "");
+        set_form_value(fields, "EndTime.Minute", "");
+    } else {
+        set_form_value(fields, "SetTime.Hour", starts_at.hour().to_string());
+        set_form_value(
+            fields,
+            "SetTime.Minute",
+            format!("{:02}", starts_at.minute()),
+        );
+        set_form_value(fields, "EndTime.Hour", ends_at.hour().to_string());
+        set_form_value(fields, "EndTime.Minute", format!("{:02}", ends_at.minute()));
+    }
     set_form_value(fields, "Detail", input.title.trim().to_string());
     set_form_value(
         fields,
@@ -1687,5 +1720,21 @@ mod tests {
 
         let error = validate_supported_add_input(&input).expect_err("should reject");
         assert!(error.to_string().contains("単日予定"));
+    }
+
+    #[test]
+    fn allows_all_day_add_requests() {
+        let input = NewEvent {
+            title: "終日予定".to_string(),
+            description: None,
+            starts_at: DateTime::parse_from_rfc3339("2026-03-11T00:00:00+09:00")
+                .expect("timestamp"),
+            ends_at: DateTime::parse_from_rfc3339("2026-03-12T00:00:00+09:00").expect("timestamp"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+        };
+
+        validate_supported_add_input(&input).expect("should allow");
     }
 }

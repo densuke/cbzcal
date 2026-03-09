@@ -58,6 +58,13 @@ cargo run -- events list \
   --to 2026-03-16T00:00:00+09:00
 ```
 
+短い書き方も使えます。
+
+```bash
+cargo run -- events list --date today
+cargo run -- events list --from today --for 7d
+```
+
 `fixture` バックエンドで予定を一覧表示します。
 
 ```bash
@@ -77,6 +84,27 @@ cargo run -- events add \
   --start 2026-03-10T10:00:00+09:00 \
   --end 2026-03-10T11:00:00+09:00 \
   --description "CLI 基盤の確認"
+```
+
+短い書き方では、次のように日付と時刻を分けて指定できます。
+
+```bash
+cargo run -- events add \
+  --title "設計レビュー" \
+  --date 3/10 \
+  --at 9 \
+  --until 11 \
+  --description "CLI 基盤の確認"
+
+cargo run -- events add \
+  --title "設計レビュー" \
+  --date 3/11 \
+  --at 9 \
+  --for 2h
+
+cargo run -- events add \
+  --title "終日予定" \
+  --date today
 ```
 
 `cybozu-html` の `events add` は現時点で通常予定の単日登録のみ対応です。`--attendee`、`--facility`、`--calendar`、日付またぎ予定はまだ扱えません。

@@ -36,7 +36,7 @@ pub fn execute(cli: Cli) -> Result<String> {
             let mut backend = build_backend(&loaded.config)?;
             match command {
                 EventsCommand::List(args) => {
-                    let query: ListQuery = args.into();
+                    let query: ListQuery = args.query()?;
                     let events = backend.list_events(query.with_default_window())?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
@@ -44,7 +44,7 @@ pub fn execute(cli: Cli) -> Result<String> {
                     })
                 }
                 EventsCommand::Add(args) => {
-                    let event = backend.add_event(args.into())?;
+                    let event = backend.add_event(args.new_event()?)?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
                         data: event,
