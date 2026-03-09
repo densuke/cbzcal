@@ -10,6 +10,7 @@
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - `events --prompt "..."` で自然文から `list` / `add` / `update` / `clone` / `delete` の引数生成を試せます。既定では必ず確認し、`--yes` は `list` / `add` / `clone` のみ省略可能です。
 - `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は `XDG_STATE_HOME/cbzcal/session-cookies.json`、未設定時は `~/.local/state/cbzcal/session-cookies.json` です。
+- 予定データもローカルにキャッシュします。リクエストされた期間がすでに取得済みの期間内（サブレンジ）であれば、通信を行わずにキャッシュから返します。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
 - Unix 系では、設定ファイルの権限が `0400` または `0600` でないと起動しません。
@@ -22,7 +23,7 @@
 - [開発フロー](docs/03-development-flow.md)
 - [ブラウザ調査計画](docs/04-browser-investigation.md)
 
-`docs/01-research.md` には、2026-03-09 時点で採取できた認証フローと予定画面の実観測結果を追記しています。
+`docs/01-research.md` には、2026-03-09 時点で採取できた認証フローと予定画面の実観測結果、およびキャッシュ効率化や現在時刻表示などの改善内容を追記しています。
 
 ## 使い方
 
@@ -48,6 +49,7 @@ cargo run -- probe-login
 `cybozu-html` は 1 回目のログイン成功後に Cookie を保存し、次回以降は有効なセッションが残っていれば再ログインを省略します。保存先を変えたい場合は `session_cache_path` を設定します。
 
 Cybozu 実サイトの一覧取得を試します。既定では人間向けのテキスト表示です。
+現在の時刻に応じて、進行中の予定には `>` が付き、予定の間に `--- 現在 (HH:mm) ---` マーカーが表示されます。
 
 ```bash
 cargo run -- events list
