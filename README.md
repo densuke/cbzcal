@@ -47,6 +47,12 @@ cargo run -- probe-login
 Cybozu 実サイトの一覧取得を試します。
 
 ```bash
+cargo run -- events list
+```
+
+期間を明示したい場合は `--from` / `--to` を付けます。未指定時は JST 当日 00:00 から 1 週間です。
+
+```bash
 cargo run -- events list \
   --from 2026-03-09T00:00:00+09:00 \
   --to 2026-03-16T00:00:00+09:00

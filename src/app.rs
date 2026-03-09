@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 use serde::Serialize;
 
 use crate::{
-    backend::{CybozuHtmlBackend, build_backend},
+    backend::{CybozuHtmlBackend, ListQuery, build_backend},
     cli::{Cli, Command, EventsCommand},
     config::AppConfig,
 };
@@ -36,7 +36,8 @@ pub fn execute(cli: Cli) -> Result<String> {
             let mut backend = build_backend(&loaded.config)?;
             match command {
                 EventsCommand::List(args) => {
-                    let events = backend.list_events(args.into())?;
+                    let query: ListQuery = args.into();
+                    let events = backend.list_events(query.with_default_window())?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
                         data: events,

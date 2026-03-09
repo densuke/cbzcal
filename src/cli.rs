@@ -45,9 +45,9 @@ pub enum EventsCommand {
 
 #[derive(Debug, Args)]
 pub struct ListArgs {
-    #[arg(long, value_parser = parse_timestamp)]
+    #[arg(long, value_parser = parse_timestamp, help = "開始日時。未指定時は JST 当日 00:00 から 1 週間")]
     pub from: Option<DateTime<FixedOffset>>,
-    #[arg(long, value_parser = parse_timestamp)]
+    #[arg(long, value_parser = parse_timestamp, help = "終了日時。未指定時は開始から 1 週間、両方未指定なら 1 週間")]
     pub to: Option<DateTime<FixedOffset>>,
 }
 

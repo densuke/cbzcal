@@ -632,6 +632,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 非公開予定のうち詳細リンクがないものは一覧に出ない
 - `id` は将来の更新/削除で必要な画面文脈を残すため、`sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合形式にしている
 - `calendar` は現在の HTML から安定して取れていないため `null` になる場合がある
+- CLI では出過ぎ防止のため、`events list` の `from` / `to` が両方未指定なら JST 当日 00:00 から 1 週間に制限する
 
 ### 16. 次に採るべきもの
 
