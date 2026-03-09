@@ -41,11 +41,21 @@ pub struct LoadedConfig {
     pub config: AppConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CredentialPair {
     pub username: String,
     pub password: String,
     pub source: CredentialSource,
+}
+
+impl std::fmt::Debug for CredentialPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialPair")
+            .field("username", &self.username)
+            .field("password", &"***")
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +121,7 @@ pub struct FixtureConfig {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct CybozuHtmlConfig {
     pub base_url: String,
     pub office_login_url: Option<String>,
@@ -126,6 +136,26 @@ pub struct CybozuHtmlConfig {
     pub office_username: Option<String>,
     pub office_password: Option<String>,
     pub user_agent: Option<String>,
+}
+
+impl std::fmt::Debug for CybozuHtmlConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CybozuHtmlConfig")
+            .field("base_url", &self.base_url)
+            .field("office_login_url", &self.office_login_url)
+            .field("office_login_post_url", &self.office_login_post_url)
+            .field("session_cache_path", &self.session_cache_path)
+            .field("basic_username_env", &self.basic_username_env)
+            .field("basic_password_env", &self.basic_password_env)
+            .field("basic_username", &self.basic_username)
+            .field("basic_password", &self.basic_password.as_ref().map(|_| "***"))
+            .field("office_username_env", &self.office_username_env)
+            .field("office_password_env", &self.office_password_env)
+            .field("office_username", &self.office_username)
+            .field("office_password", &self.office_password.as_ref().map(|_| "***"))
+            .field("user_agent", &self.user_agent)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
