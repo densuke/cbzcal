@@ -611,10 +611,32 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 運用上は `*_env` を標準とし、`basic_username` / `office_username` などの平文設定は一時検証用 fallback に留める
 - 設定探索の標準は `.cbzcal.toml` とし、探索順は `PWD -> XDG -> HOME`、各場所で `.toml` を先に見て `.yml` を fallback にする
 
-### 15. 次に採るべきもの
+### 15. `events list` 実装メモ
 
-- `events list` の HTML パースを実装し、ヘッドレスログイン済みセッションから一覧を取得する
+2026-03-09 時点で、`.cbzcal.toml` の `cybozu-html` 設定を使い、ヘッドレスで `events list` を実サイトに対して実行できるところまで確認しました。
+
+現在の抽出方式:
+
+- `ScheduleIndex` の `div.dragTarget[data-cb-eid]` を 1 予定として扱う
+- 詳細リンク `a.event[href*="page=ScheduleView"]` から `sEID`, `UID`, `GID`, `Date`, `BDate` を取る
+- 開始終了は `data-cb-st`, `data-cb-et` を読む
+- `data-cb-st` / `data-cb-et` には少なくとも次の形式がある
+  - `dt.Y.M.D.H.M.S`
+  - `tm.H.M.S`
+  - `dt.Y.M.D.-1.-1.-1` で終日扱い
+- グループ週表示では共有予定が参加者行ごとに重複するため、CLI では `sEID + Date + BDate` 単位で 1 件に畳む
+
+現時点の制約:
+
+- `description`, `attendees`, `facility` はまだ取っていない
+- 非公開予定のうち詳細リンクがないものは一覧に出ない
+- `id` は将来の更新/削除で必要な画面文脈を残すため、`sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合形式にしている
+- `calendar` は現在の HTML から安定して取れていないため `null` になる場合がある
+
+### 16. 次に採るべきもの
+
 - `ScheduleRegularEntry?mode=reuse` の hidden 項目を採る
 - 実際に 1 件だけテスト予定を登録し、成功後の遷移と完了メッセージを採る
 - 実登録後に `list -> view -> modify -> delete` の往復で `sEID` と hidden の整合性を確認する
+- `events add` のフォーム送信を実装する
 - `空き時間を確認する` や参加者検索時の補助リクエストを、必要なら別途採る

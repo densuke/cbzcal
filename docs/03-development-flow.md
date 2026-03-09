@@ -45,9 +45,12 @@ flowchart TD
 - `probe-login` で Basic 認証 + Cybozu ログイン + `ScheduleIndex` 到達を確認する
 - ログイン処理を `getToken.json -> login.json -> availableDays.json -> redirect.do` の順で実装する
 - 一覧取得の HTML パーサを追加
+- `data-cb-st` / `data-cb-et` の `dt` / `tm` / 終日表現を解釈する
+- グループ週表示で重複する共有予定を `sEID + Date + BDate` 単位で畳む
 - イベント ID と表示項目の対応を固定する
 
-この段階で `events list` を本番バックエンドで動かせるようにします。
+この段階で `events list` を本番バックエンドで動かせるようにします。  
+2026-03-09 時点で、この段階までは実サイト確認済みです。
 
 ## Phase 3
 
