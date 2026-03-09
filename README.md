@@ -1,13 +1,13 @@
 # cbzcal
 
 サイボウズ Office の予定表を CLI から扱うためのベースプロジェクトです。  
-現時点では、公開ドキュメントの整理、日本語の設計資料、TDD 用の `fixture` バックエンド、そして `cybozu-html` による認証と一覧取得の基盤までを用意しています。
+現時点では、公開ドキュメントの整理、日本語の設計資料、TDD 用の `fixture` バックエンド、そして `cybozu-html` による認証、一覧取得、単発予定追加までを用意しています。
 
 ## 現状
 
 - `fixture` バックエンドでは、予定の一覧取得・追加・更新・複製・削除をローカル JSON に対して実行できます。
-- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` まで実サイトで確認済みです。
-- `cybozu-html` の実サイト向け CRUD は未実装です。対象サイトの HTML/フォーム契約を採取してから実装を進める前提です。
+- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` まで実サイトで確認済みです。
+- `cybozu-html` の実サイト向け `events update` / `events clone` / `events delete` は未実装です。対象サイトの HTML/フォーム契約を採取してから実装を進める前提です。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
@@ -66,7 +66,7 @@ cargo run -- events list \
   --to 2026-04-01T00:00:00+09:00
 ```
 
-`cybozu-html` では現時点で `description` / `attendees` / `facility` は未抽出です。  
+`cybozu-html` では現時点で `description` / `attendees` / `facility` は一覧から未抽出です。  
 また、グループ週表示では共有予定が参加者ごとに重複して見えるため、CLI では `sEID + Date + BDate` 単位で 1 件に畳み、さらに現在ユーザーの `UID` 行だけを取得対象にしています。
 
 予定を追加します。
@@ -76,12 +76,10 @@ cargo run -- events add \
   --title "設計レビュー" \
   --start 2026-03-10T10:00:00+09:00 \
   --end 2026-03-10T11:00:00+09:00 \
-  --description "CLI 基盤の確認" \
-  --attendee alice \
-  --attendee bob \
-  --facility 会議室A \
-  --calendar 開発
+  --description "CLI 基盤の確認"
 ```
+
+`cybozu-html` の `events add` は現時点で通常予定の単日登録のみ対応です。`--attendee`、`--facility`、`--calendar`、日付またぎ予定はまだ扱えません。
 
 明示的に別ファイルを使いたい場合は `--config /path/to/config.toml` を指定します。  
 対応形式は `.yml`、`.yaml`、`.toml` です。

@@ -185,9 +185,9 @@ impl AppConfig {
                     cybozu.office_password.as_deref(),
                 );
 
-                checks.push(DoctorCheck::error(
+                checks.push(DoctorCheck::warn(
                     "html-contract",
-                    "cybozu-html バックエンドは足場までです。実サイトの HTML/フォーム契約を採取するまで CRUD は有効化されません。".to_string(),
+                    "cybozu-html バックエンドは `events list` と単日通常予定の `events add` まで確認済みです。`events update` / `events clone` / `events delete` と add の拡張は未実装です。".to_string(),
                 ));
 
                 next_steps.push(
@@ -198,7 +198,7 @@ impl AppConfig {
                         .to_string(),
                 );
                 next_steps.push(
-                    "採取結果をもとに src/backend/cybozu_html.rs の未実装箇所を埋める".to_string(),
+                    "採取結果をもとに src/backend/cybozu_html.rs の update/clone/delete と add 拡張を埋める".to_string(),
                 );
             }
         }

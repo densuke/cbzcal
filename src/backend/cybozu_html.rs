@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
 use reqwest::{
     Url,
     blocking::{Client, RequestBuilder},
     header::LOCATION,
 };
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -55,6 +55,19 @@ struct ScheduleViewIdentity {
     date: String,
     bdate: String,
     seid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScheduleIndexContext {
+    current_user_uid: String,
+    gid: String,
+    week_start: NaiveDate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HtmlForm {
+    action_url: String,
+    fields: Vec<(String, String)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -437,6 +450,39 @@ impl CybozuHtmlBackend {
         &self,
         query: &ListQuery,
     ) -> Result<(Option<CredentialPair>, Vec<ResponseSnapshot>)> {
+        let (basic_credentials, first_schedule_index) =
+            self.bootstrap_authenticated_schedule_index()?;
+
+        let default_week =
+            extract_schedule_anchor_date(&first_schedule_index.body, &first_schedule_index.url)
+                .unwrap_or_else(|| week_start(today_jst()));
+        let gid = extract_schedule_index_gid(&first_schedule_index.body, &first_schedule_index.url);
+        let target_weeks = list_target_weeks(query, default_week);
+
+        let mut pages = Vec::new();
+        let mut seen_weeks = HashSet::new();
+        for week in target_weeks {
+            if !seen_weeks.insert(week) {
+                continue;
+            }
+            if week == default_week {
+                pages.push(first_schedule_index.clone());
+                continue;
+            }
+
+            pages.push(self.fetch_schedule_index(
+                &basic_credentials,
+                Some(week),
+                gid.as_deref(),
+            )?);
+        }
+
+        Ok((basic_credentials, pages))
+    }
+
+    fn bootstrap_authenticated_schedule_index(
+        &self,
+    ) -> Result<(Option<CredentialPair>, ResponseSnapshot)> {
         let basic_credentials = self.config.resolve_basic_credentials()?;
         let office_credentials = self
             .config
@@ -464,31 +510,7 @@ impl CybozuHtmlBackend {
             bail!("初回ページが login/authenticated のどちらにも判定できませんでした");
         };
 
-        let default_week =
-            extract_schedule_anchor_date(&first_schedule_index.body, &first_schedule_index.url)
-                .unwrap_or_else(|| week_start(today_jst()));
-        let gid = extract_schedule_index_gid(&first_schedule_index.body, &first_schedule_index.url);
-        let target_weeks = list_target_weeks(query, default_week);
-
-        let mut pages = Vec::new();
-        let mut seen_weeks = HashSet::new();
-        for week in target_weeks {
-            if !seen_weeks.insert(week) {
-                continue;
-            }
-            if week == default_week {
-                pages.push(first_schedule_index.clone());
-                continue;
-            }
-
-            pages.push(self.fetch_schedule_index(
-                &basic_credentials,
-                Some(week),
-                gid.as_deref(),
-            )?);
-        }
-
-        Ok((basic_credentials, pages))
+        Ok((basic_credentials, first_schedule_index))
     }
 
     fn fetch_schedule_index(
@@ -534,6 +556,63 @@ impl CybozuHtmlBackend {
         }
 
         Ok(url.to_string())
+    }
+
+    fn extract_schedule_index_context(
+        &self,
+        page: &ResponseSnapshot,
+    ) -> Result<ScheduleIndexContext> {
+        let current_user_uid =
+            extract_current_user_uid(&page.body, &page.url).ok_or_else(|| {
+                anyhow::anyhow!("現在ユーザーの UID を ScheduleIndex から取得できません")
+            })?;
+        let gid = extract_schedule_index_gid(&page.body, &page.url)
+            .ok_or_else(|| anyhow::anyhow!("ScheduleIndex の GID を取得できません"))?;
+        let week_start = extract_schedule_anchor_date(&page.body, &page.url)
+            .unwrap_or_else(|| week_start(today_jst()));
+
+        Ok(ScheduleIndexContext {
+            current_user_uid,
+            gid,
+            week_start,
+        })
+    }
+
+    fn schedule_entry_url(
+        &self,
+        context: &ScheduleIndexContext,
+        event_date: NaiveDate,
+    ) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        let bdate = week_start(event_date);
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleEntry");
+            query.append_pair("UID", &context.current_user_uid);
+            query.append_pair("GID", &context.gid);
+            query.append_pair("Date", &format_da_date(event_date));
+            query.append_pair("BDate", &format_da_date(bdate));
+            query.append_pair("cp", "sg");
+        }
+
+        Ok(url.to_string())
+    }
+
+    fn fetch_schedule_entry(
+        &self,
+        basic_credentials: &Option<CredentialPair>,
+        context: &ScheduleIndexContext,
+        event_date: NaiveDate,
+    ) -> Result<ResponseSnapshot> {
+        let url = self.schedule_entry_url(context, event_date)?;
+        let response = self
+            .get_following_redirects(&url, basic_credentials)
+            .with_context(|| format!("ScheduleEntry の取得に失敗しました: {url}"))?;
+        if !is_schedule_entry_page(&response.url, &response.body) {
+            bail!("ScheduleEntry に到達できませんでした: {}", response.url);
+        }
+        Ok(response)
     }
 
     fn login_post_url(&self) -> Result<String> {
@@ -602,6 +681,50 @@ impl CybozuHtmlBackend {
         bail!("redirect が多すぎます")
     }
 
+    fn post_form_following_redirects(
+        &self,
+        url: &str,
+        form: &[(String, String)],
+        referer: &str,
+        credentials: &Option<CredentialPair>,
+    ) -> Result<ResponseSnapshot> {
+        let response = self
+            .request_with_optional_basic(self.client.post(url), credentials)
+            .header("Referer", referer)
+            .header("Origin", request_origin(url)?)
+            .form(form)
+            .send()?;
+
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| anyhow::anyhow!("POST 後の redirect location がありません"))?;
+            let redirect_url = response
+                .url()
+                .join(location)
+                .map(|url| url.to_string())
+                .context("POST 後の redirect URL を解決できません")?;
+            return self.get_following_redirects(&redirect_url, credentials);
+        }
+
+        let status = response.status().as_u16();
+        let response_url = response.url().to_string();
+        let body = response.text()?;
+        if is_redirect_stub_page(&body)
+            && let Some(redirect_url) = extract_js_redirect_url(&response_url, &body)
+        {
+            return self.get_following_redirects(&redirect_url, credentials);
+        }
+
+        Ok(ResponseSnapshot {
+            status,
+            url: response_url,
+            body,
+        })
+    }
+
     fn pending_contract_error(&self, operation: &str) -> anyhow::Error {
         anyhow::anyhow!(
             "`{operation}` は未実装です。{} の HTML/フォーム契約を採取し、docs/03-development-flow.md の Phase 1 を完了してから有効化してください",
@@ -647,8 +770,43 @@ impl CalendarBackend for CybozuHtmlBackend {
         Ok(events)
     }
 
-    fn add_event(&mut self, _input: NewEvent) -> Result<CalendarEvent> {
-        bail!(self.pending_contract_error("events add"));
+    fn add_event(&mut self, input: NewEvent) -> Result<CalendarEvent> {
+        input.validate()?;
+        validate_supported_add_input(&input)?;
+
+        let starts_at = input.starts_at.with_timezone(&jst_offset());
+        let event_date = starts_at.date_naive();
+        let target_week = week_start(event_date);
+        let (basic_credentials, first_schedule_index) =
+            self.bootstrap_authenticated_schedule_index()?;
+        let mut context = self.extract_schedule_index_context(&first_schedule_index)?;
+        context.week_start = target_week;
+
+        let schedule_entry = self.fetch_schedule_entry(&basic_credentials, &context, event_date)?;
+        let mut form = parse_html_form(&schedule_entry.body, &schedule_entry.url, "ScheduleEntry")?;
+        populate_schedule_entry_form(&mut form.fields, &input, &context);
+        let submit_response = self.post_form_following_redirects(
+            &form.action_url,
+            &form.fields,
+            &schedule_entry.url,
+            &basic_credentials,
+        )?;
+        if is_login_page(&submit_response.url, &submit_response.body) {
+            bail!("予定登録後にログイン画面へ戻りました。セッションを維持できていません");
+        }
+
+        let week_page =
+            self.fetch_schedule_index(&basic_credentials, Some(target_week), Some(&context.gid))?;
+        let calendar_name = extract_calendar_name(&week_page.body);
+        let events = parse_schedule_index_events(
+            &week_page.body,
+            &week_page.url,
+            calendar_name.as_deref(),
+            Some(&context.current_user_uid),
+        )?;
+
+        find_created_event(events, &input)
+            .ok_or_else(|| anyhow::anyhow!("登録後の予定を ScheduleIndex から特定できませんでした"))
     }
 
     fn update_event(&mut self, _id: &str, _patch: EventPatch) -> Result<CalendarEvent> {
@@ -724,6 +882,10 @@ fn is_schedule_index_page(url: &str, body: &str) -> bool {
     url.contains("ScheduleIndex") && body.contains("スケジュール")
 }
 
+fn is_schedule_entry_page(url: &str, body: &str) -> bool {
+    url.contains("ScheduleEntry") && body.contains("name=\"ScheduleEntry\"")
+}
+
 fn is_redirect_stub_page(body: &str) -> bool {
     body.contains("リダイレクト中") && body.contains("location.replace(")
 }
@@ -759,6 +921,171 @@ fn extract_js_redirect_url(base_url: &str, body: &str) -> Option<String> {
     let end = rest.find(quote)?;
     let relative = &rest[..end];
     infer_related_url(base_url, relative)
+}
+
+fn validate_supported_add_input(input: &NewEvent) -> Result<()> {
+    if input.title.trim().is_empty() {
+        bail!("タイトルは必須です");
+    }
+    if !input.attendees.is_empty() {
+        bail!("現時点の `events add` は参加者追加に未対応です");
+    }
+    if input.facility.is_some() {
+        bail!("現時点の `events add` は設備予約に未対応です");
+    }
+    if input.calendar.is_some() {
+        bail!("現時点の `events add` はカレンダー指定に未対応です");
+    }
+
+    let starts_at = input.starts_at.with_timezone(&jst_offset());
+    let ends_at = input.ends_at.with_timezone(&jst_offset());
+    if starts_at.date_naive() != ends_at.date_naive() {
+        bail!("現時点の `events add` は単日予定のみ対応です");
+    }
+    if starts_at.second() != 0 || ends_at.second() != 0 {
+        bail!("現時点の `events add` は分単位のみ対応です");
+    }
+
+    Ok(())
+}
+
+fn parse_html_form(html: &str, page_url: &str, form_name: &str) -> Result<HtmlForm> {
+    let document = Html::parse_document(html);
+    let form_selector = Selector::parse(&format!("form[name=\"{form_name}\"]"))
+        .map_err(|error| anyhow::anyhow!("form selector を解釈できません: {error}"))?;
+    let field_selector =
+        Selector::parse("input[name], textarea[name], select[name]").expect("valid field selector");
+    let form = document
+        .select(&form_selector)
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("{form_name} form が見つかりません"))?;
+    let action = form.value().attr("action").unwrap_or(page_url);
+    let action_url = Url::parse(page_url)?.join(action)?.to_string();
+    let mut fields = Vec::new();
+
+    for field in form.select(&field_selector) {
+        let Some(name) = field.value().attr("name") else {
+            continue;
+        };
+        let tag = field.value().name();
+        match tag {
+            "input" => {
+                let input_type = field
+                    .value()
+                    .attr("type")
+                    .unwrap_or("text")
+                    .to_ascii_lowercase();
+                match input_type.as_str() {
+                    "submit" | "button" | "image" | "file" => {}
+                    "checkbox" | "radio" => {
+                        if field.value().attr("checked").is_some() {
+                            let value = field.value().attr("value").unwrap_or("on");
+                            fields.push((name.to_string(), value.to_string()));
+                        }
+                    }
+                    _ => {
+                        let value = field.value().attr("value").unwrap_or("");
+                        fields.push((name.to_string(), value.to_string()));
+                    }
+                }
+            }
+            "textarea" => {
+                fields.push((name.to_string(), field.text().collect::<String>()));
+            }
+            "select" => {
+                if let Some(value) = extract_select_value(field) {
+                    fields.push((name.to_string(), value));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(HtmlForm { action_url, fields })
+}
+
+fn extract_select_value(select: ElementRef<'_>) -> Option<String> {
+    let option_selector = Selector::parse("option").expect("valid option selector");
+    let options = select.select(&option_selector).collect::<Vec<_>>();
+    let selected = options
+        .iter()
+        .find(|option| option.value().attr("selected").is_some())
+        .copied()
+        .or_else(|| options.first().copied())?;
+    Some(selected.value().attr("value").unwrap_or("").to_string())
+}
+
+fn set_form_value(fields: &mut Vec<(String, String)>, name: &str, value: impl Into<String>) {
+    let value = value.into();
+    let mut matched = false;
+    for (field_name, field_value) in fields.iter_mut() {
+        if field_name == name {
+            *field_value = value.clone();
+            matched = true;
+        }
+    }
+    if !matched {
+        fields.push((name.to_string(), value));
+    }
+}
+
+fn populate_schedule_entry_form(
+    fields: &mut Vec<(String, String)>,
+    input: &NewEvent,
+    context: &ScheduleIndexContext,
+) {
+    let starts_at = input.starts_at.with_timezone(&jst_offset());
+    let ends_at = input.ends_at.with_timezone(&jst_offset());
+    let event_date = starts_at.date_naive();
+    let bdate = week_start(event_date);
+
+    set_form_value(fields, "page", "ScheduleEntry");
+    set_form_value(fields, "UID", context.current_user_uid.clone());
+    set_form_value(fields, "GID", context.gid.clone());
+    set_form_value(fields, "Date", format_da_date(event_date));
+    set_form_value(fields, "BDate", format_da_date(bdate));
+    set_form_value(fields, "SetDate.Year", starts_at.year().to_string());
+    set_form_value(fields, "SetDate.Month", starts_at.month().to_string());
+    set_form_value(fields, "SetDate.Day", starts_at.day().to_string());
+    set_form_value(fields, "SetMultiDates", format_da_date(event_date));
+    set_form_value(fields, "SetTime.Hour", starts_at.hour().to_string());
+    set_form_value(
+        fields,
+        "SetTime.Minute",
+        format!("{:02}", starts_at.minute()),
+    );
+    set_form_value(fields, "EndTime.Hour", ends_at.hour().to_string());
+    set_form_value(fields, "EndTime.Minute", format!("{:02}", ends_at.minute()));
+    set_form_value(fields, "Detail", input.title.trim().to_string());
+    set_form_value(
+        fields,
+        "Memo",
+        input.description.as_deref().unwrap_or("").to_string(),
+    );
+    set_form_value(fields, "sUID", context.current_user_uid.clone());
+    set_form_value(fields, "Entry", "登録する");
+}
+
+fn find_created_event(events: Vec<CalendarEvent>, input: &NewEvent) -> Option<CalendarEvent> {
+    let starts_at = input.starts_at.with_timezone(&jst_offset());
+    let ends_at = input.ends_at.with_timezone(&jst_offset());
+    let mut matches = events
+        .into_iter()
+        .filter(|event| {
+            event.title == input.title.trim()
+                && event.starts_at == starts_at
+                && event.ends_at == ends_at
+        })
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|event| extract_numeric_seid(&event.id).unwrap_or_default());
+    let mut created = matches.pop()?;
+    created.description = input.description.clone();
+    Some(created)
+}
+
+fn extract_numeric_seid(id: &str) -> Option<u64> {
+    let url = format!("https://example.invalid/?{id}");
+    extract_query_parameter(&url, "sEID")?.parse::<u64>().ok()
 }
 
 fn parse_schedule_index_events(
@@ -1244,5 +1571,121 @@ mod tests {
             .as_deref(),
             Some("379")
         );
+    }
+
+    #[test]
+    fn parses_schedule_entry_form_fields() {
+        let html = r#"
+<html>
+  <body>
+    <form name="ScheduleEntry" method="POST" action="ag.cgi?">
+      <input type="hidden" name="page" value="ScheduleEntry">
+      <input type="hidden" name="UID" value="379">
+      <input type="hidden" name="csrf_ticket" value="ticket">
+      <input type="text" name="Detail" value="">
+      <textarea name="Memo"></textarea>
+      <select name="FGID">
+        <option value="100">A</option>
+        <option value="394" selected>B</option>
+      </select>
+      <input type="file" name="files[]">
+      <input type="submit" name="Entry" value="登録する">
+    </form>
+  </body>
+</html>
+"#;
+
+        let form = parse_html_form(
+            html,
+            "https://example.cybozu.com/o/ag.cgi?page=ScheduleEntry",
+            "ScheduleEntry",
+        )
+        .expect("form");
+
+        assert_eq!(form.action_url, "https://example.cybozu.com/o/ag.cgi?");
+        assert!(
+            form.fields
+                .contains(&(String::from("page"), String::from("ScheduleEntry")))
+        );
+        assert!(
+            form.fields
+                .contains(&(String::from("UID"), String::from("379")))
+        );
+        assert!(
+            form.fields
+                .contains(&(String::from("csrf_ticket"), String::from("ticket")))
+        );
+        assert!(
+            form.fields
+                .contains(&(String::from("FGID"), String::from("394")))
+        );
+        assert!(!form.fields.iter().any(|(name, _)| name == "files[]"));
+        assert!(!form.fields.iter().any(|(name, _)| name == "Entry"));
+    }
+
+    #[test]
+    fn populates_schedule_entry_form_for_single_day_event() {
+        let mut fields = vec![
+            ("page".to_string(), "ScheduleEntry".to_string()),
+            ("UID".to_string(), "379".to_string()),
+            ("GID".to_string(), "183".to_string()),
+            ("Date".to_string(), "da.2026.3.9".to_string()),
+            ("BDate".to_string(), "da.2026.3.9".to_string()),
+            ("SetDate.Year".to_string(), "2026".to_string()),
+            ("SetDate.Month".to_string(), "3".to_string()),
+            ("SetDate.Day".to_string(), "9".to_string()),
+            ("SetMultiDates".to_string(), "da.2026.3.9".to_string()),
+            ("SetTime.Hour".to_string(), "".to_string()),
+            ("SetTime.Minute".to_string(), "".to_string()),
+            ("EndTime.Hour".to_string(), "".to_string()),
+            ("EndTime.Minute".to_string(), "".to_string()),
+            ("Detail".to_string(), "".to_string()),
+            ("Memo".to_string(), "".to_string()),
+            ("sUID".to_string(), "379".to_string()),
+        ];
+        let input = NewEvent {
+            title: "テスト予定".to_string(),
+            description: Some("本文".to_string()),
+            starts_at: DateTime::parse_from_rfc3339("2026-03-11T09:30:00+09:00")
+                .expect("timestamp"),
+            ends_at: DateTime::parse_from_rfc3339("2026-03-11T10:15:00+09:00").expect("timestamp"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+        };
+        let context = ScheduleIndexContext {
+            current_user_uid: "379".to_string(),
+            gid: "183".to_string(),
+            week_start: NaiveDate::from_ymd_opt(2026, 3, 9).expect("date"),
+        };
+
+        populate_schedule_entry_form(&mut fields, &input, &context);
+
+        assert!(fields.contains(&(String::from("Date"), String::from("da.2026.3.11"))));
+        assert!(fields.contains(&(String::from("BDate"), String::from("da.2026.3.9"))));
+        assert!(fields.contains(&(String::from("SetTime.Hour"), String::from("9"))));
+        assert!(fields.contains(&(String::from("SetTime.Minute"), String::from("30"))));
+        assert!(fields.contains(&(String::from("EndTime.Hour"), String::from("10"))));
+        assert!(fields.contains(&(String::from("EndTime.Minute"), String::from("15"))));
+        assert!(fields.contains(&(String::from("Detail"), String::from("テスト予定"))));
+        assert!(fields.contains(&(String::from("Memo"), String::from("本文"))));
+        assert!(fields.contains(&(String::from("Entry"), String::from("登録する"))));
+    }
+
+    #[test]
+    fn rejects_multi_day_add_requests() {
+        let input = NewEvent {
+            title: "テスト予定".to_string(),
+            description: None,
+            starts_at: DateTime::parse_from_rfc3339("2026-03-11T23:00:00+09:00")
+                .expect("timestamp"),
+            ends_at: DateTime::parse_from_rfc3339("2026-03-12T00:30:00+09:00").expect("timestamp"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+        };
+
+        let error = validate_supported_add_input(&input).expect_err("should reject");
+        assert!(error.to_string().contains("単日予定"));
     }
 }

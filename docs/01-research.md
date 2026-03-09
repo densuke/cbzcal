@@ -639,7 +639,48 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 ### 16. 次に採るべきもの
 
 - `ScheduleRegularEntry?mode=reuse` の hidden 項目を採る
-- 実際に 1 件だけテスト予定を登録し、成功後の遷移と完了メッセージを採る
 - 実登録後に `list -> view -> modify -> delete` の往復で `sEID` と hidden の整合性を確認する
-- `events add` のフォーム送信を実装する
+- `events add` で未対応の参加者追加、設備予約、複数日予定の分岐を採る
+- `events update` / `events clone` / `events delete` のフォーム送信を実装する
 - `空き時間を確認する` や参加者検索時の補助リクエストを、必要なら別途採る
+
+### 17. `events add` 実装メモ
+
+2026-03-09 時点で、`.cbzcal.toml` の `cybozu-html` 設定を使い、ヘッドレスで `events add` を実サイトに対して実行できるところまで確認しました。
+
+現時点の実装範囲:
+
+- 対応画面は `ScheduleEntry`
+- `ScheduleIndex` から現在ユーザーの `UID` と `GID` を取り、対象日の `ScheduleEntry` を取得する
+- 実画面の `ScheduleEntry` form から hidden と既定値を丸ごと取り、必要項目だけ上書きして `POST ag.cgi?` する
+- 送信後は対象週の `ScheduleIndex` を再取得し、`title + starts_at + ends_at` で追加直後の予定を特定する
+
+送信時に上書きしている主要項目:
+
+- `Date`
+- `BDate`
+- `SetDate.Year`
+- `SetDate.Month`
+- `SetDate.Day`
+- `SetMultiDates`
+- `SetTime.Hour`
+- `SetTime.Minute`
+- `EndTime.Hour`
+- `EndTime.Minute`
+- `Detail`
+- `Memo`
+- `sUID`
+- `Entry=登録する`
+
+実サイト確認結果:
+
+- 2099-01-05 09:00-09:30 JST のテスト予定を headless で追加できた
+- 返却された複合 ID は `sEID=3096796&UID=379&GID=183&Date=da.2099.1.5&BDate=da.2099.1.5`
+- 直後の `events list --from 2099-01-05T00:00:00+09:00 --to 2099-01-06T00:00:00+09:00` で同一予定を再取得できた
+
+現時点の制約:
+
+- 単日・通常予定のみ
+- `attendees`, `facility`, `calendar` は未対応
+- 秒を含む時刻は未対応で、分単位前提
+- 返り値の `description` は送信値を返すが、一覧 HTML からはまだ再抽出していない
