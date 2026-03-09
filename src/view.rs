@@ -83,10 +83,9 @@ pub fn render_event_list(
                 weekday_abbr(date.weekday()),
             ));
             current_date = Some(date);
-            now_marker_shown = false; // Reset marker for each day
+            now_marker_shown = false;
         }
 
-        // Show "Now" marker if we are at today and now is between previous event end and this event start
         if let Some(now_val) = now {
             if !now_marker_shown && date == now_val.date_naive() && now_val < event.starts_at {
                 out.push_str(&format!(
@@ -104,30 +103,18 @@ pub fn render_event_list(
         out.push_str(prefix);
         out.push_str(&format_event_time(event));
         out.push_str("  ");
-        out.push_str(&event.title);
+        out.push_str(&sanitize_terminal_output(&event.title));
         out.push(' ');
         out.push('[');
-        out.push_str(&event.short_id());
+        out.push_str(&sanitize_terminal_output(&event.short_id()));
         out.push(']');
         out.push('\n');
 
-        // Show "Now" marker if ongoing
-        if is_ongoing && !now_marker_shown {
-            // If ongoing, the marker is effectively "inside" or "after" it. 
-            // We'll skip a separate "Now" line if it's already highlighted as ongoing.
-            now_marker_shown = true; 
-        }
-
-        // Show "Now" marker if just passed
-        if let Some(now_val) = now {
-            if !now_marker_shown && date == now_val.date_naive() && event.is_passed(now_val) {
-                // Check next event or end of day? 
-                // For simplicity, we'll check it in the next loop iteration or at the end of the day.
-            }
+        if is_ongoing {
+            now_marker_shown = true;
         }
     }
 
-    // Handle now marker if it's at the end of the day (all events passed)
     if let Some(now_val) = now {
         if !now_marker_shown && current_date == Some(now_val.date_naive()) {
             out.push_str(&format!(
@@ -161,18 +148,18 @@ pub fn render_single_event(
         weekday_abbr(date.weekday()),
         prefix,
         format_event_time(event),
-        event.title,
-        event.short_id(),
+        sanitize_terminal_output(&event.title),
+        sanitize_terminal_output(&event.short_id()),
     )
-}-{:02}-{:02} ({})\n  {}  {} [{}]",
-        date.year(),
-        date.month(),
-        date.day(),
-        weekday_abbr(date.weekday()),
-        format_event_time(event),
-        event.title,
-        event.short_id(),
-    )
+}
+
+pub fn sanitize_terminal_output(input: &str) -> String {
+    // 改行(\n, \r)とタブ(\t)以外の制御文字(ASCII < 0x20 や 0x7F 等)を除去します
+    // 特にエスケープ(0x1B)を除去することでターミナル制御コードインジェクションを防ぎます
+    input.chars().filter(|c| {
+        let u = *c as u32;
+        !(u < 0x20 && *c != '\n' && *c != '\r' && *c != '\t') && u != 0x7F
+    }).collect()
 }
 
 pub fn format_event_time(event: &CalendarEvent) -> String {
@@ -308,12 +295,18 @@ mod tests {
         ];
 
         let rendered = render_event_list(&events, Some(now)).expect("render");
-        // Marker should be merged if ongoing event exists
         assert!(rendered.contains("> 13:30-14:30  今 [e2@2026-03-09]"));
         
-        // Let's test marker between events
         let now_between = jst.with_ymd_and_hms(2026, 3, 9, 11, 0, 0).single().expect("now");
         let rendered_between = render_event_list(&events, Some(now_between)).expect("render");
         assert!(rendered_between.contains("--- 現在 (11:00) ---"));
+    }
+
+    #[test]
+    fn sanitizes_terminal_control_characters() {
+        assert_eq!(sanitize_terminal_output("Normal Text"), "Normal Text");
+        assert_eq!(sanitize_terminal_output("Escape\x1b[31mCode\x1b[0m"), "Escape[31mCode[0m");
+        assert_eq!(sanitize_terminal_output("Tab\tAnd\nNewline"), "Tab\tAnd\nNewline");
+        assert_eq!(sanitize_terminal_output("Backspace\x08"), "Backspace");
     }
 }
