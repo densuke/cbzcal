@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
@@ -97,10 +97,7 @@ pub fn plan_prompt(
     let anchor = anchor.unwrap_or_else(current_jst_date);
     let ollama = config.ollama.clone().unwrap_or_default();
     let raw = request_plan_from_ollama(&ollama, prompt, anchor)?;
-    let mut plan = parse_prompt_plan(&raw)?;
-    if plan.visibility.is_none() {
-        plan.visibility = infer_visibility_from_prompt(prompt);
-    }
+    let plan = normalize_prompt_plan(parse_prompt_plan(&raw)?, prompt, anchor);
     build_execution(plan, anchor, existing_event)
 }
 
@@ -185,6 +182,154 @@ fn infer_visibility_from_prompt(prompt: &str) -> Option<String> {
         return Some("public".to_string());
     }
     None
+}
+
+fn normalize_prompt_plan(mut plan: PromptPlan, prompt: &str, anchor: NaiveDate) -> PromptPlan {
+    if plan
+        .id
+        .as_deref()
+        .is_some_and(|value| looks_like_date_expression(value, anchor))
+        && !prompt_mentions_explicit_id(prompt)
+    {
+        plan.id = None;
+    }
+    if plan.visibility.is_none() {
+        plan.visibility = infer_visibility_from_prompt(prompt);
+    }
+    if plan.title.is_none() {
+        plan.title = infer_title_from_prompt(prompt);
+    }
+    if plan.date.is_none() {
+        plan.date = infer_date_from_prompt(prompt, anchor);
+    }
+    if plan.id.is_none()
+        && prompt_implies_add(prompt)
+        && !matches!(plan.action, PromptActionWire::Add)
+    {
+        plan.action = PromptActionWire::Add;
+    }
+    if matches!(plan.action, PromptActionWire::Add)
+        && plan.date.is_some()
+        && plan.start.is_none()
+        && plan.end.is_none()
+        && plan.at.is_none()
+        && plan.until.is_none()
+        && plan.duration.is_none()
+        && plan.all_day.is_none()
+    {
+        plan.all_day = Some(true);
+    }
+    plan
+}
+
+fn prompt_mentions_explicit_id(prompt: &str) -> bool {
+    prompt.contains("ID") || prompt.contains("id") || prompt.contains("Id")
+}
+
+fn looks_like_date_expression(value: &str, anchor: NaiveDate) -> bool {
+    let trimmed = value.trim();
+    infer_date_from_prompt(trimmed, anchor).is_some()
+        || trimmed == "今日"
+        || trimmed == "明日"
+        || trimmed == "明後日"
+}
+
+fn prompt_implies_add(prompt: &str) -> bool {
+    prompt.contains("設定") || prompt.contains("追加") || prompt.contains("登録")
+}
+
+fn infer_title_from_prompt(prompt: &str) -> Option<String> {
+    for (open, close) in [('「', '」'), ('『', '』'), ('"', '"'), ('\'', '\'')] {
+        if let Some(title) = extract_quoted(prompt, open, close) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+fn extract_quoted(input: &str, open: char, close: char) -> Option<String> {
+    let start = input.find(open)?;
+    let rest = &input[start + open.len_utf8()..];
+    let end = rest.find(close)?;
+    let value = rest[..end].trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn infer_date_from_prompt(prompt: &str, anchor: NaiveDate) -> Option<String> {
+    if prompt.contains("明後日") {
+        return anchor
+            .checked_add_days(chrono::Days::new(2))
+            .map(|date| date.format("%Y-%m-%d").to_string());
+    }
+    if prompt.contains("明日") {
+        return anchor
+            .checked_add_days(chrono::Days::new(1))
+            .map(|date| date.format("%Y-%m-%d").to_string());
+    }
+    if prompt.contains("今日") {
+        return Some(anchor.format("%Y-%m-%d").to_string());
+    }
+    if let Some((month, day)) = extract_month_day(prompt) {
+        let year = anchor.year();
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            return Some(date.format("%Y-%m-%d").to_string());
+        }
+    }
+    if let Some(day) = extract_day_only(prompt) {
+        let mut year = anchor.year();
+        let mut month = anchor.month();
+        if day < anchor.day() {
+            if month == 12 {
+                year += 1;
+                month = 1;
+            } else {
+                month += 1;
+            }
+        }
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            return Some(date.format("%Y-%m-%d").to_string());
+        }
+    }
+    None
+}
+
+fn extract_month_day(prompt: &str) -> Option<(u32, u32)> {
+    let slash = prompt.find('/')?;
+    let month = prompt[..slash]
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()?;
+    let rest = &prompt[slash + 1..];
+    let day = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()?;
+    Some((month, day))
+}
+
+fn extract_day_only(prompt: &str) -> Option<u32> {
+    let day_pos = prompt.find('日')?;
+    let prefix = &prompt[..day_pos];
+    let digits = prefix
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<u32>().ok()
 }
 
 fn parse_prompt_plan(raw: &str) -> Result<PromptPlan> {
@@ -965,5 +1110,37 @@ mod tests {
             infer_visibility_from_prompt("明日の17時半から3時間、非公開で設定"),
             Some("private".to_string())
         );
+    }
+
+    #[test]
+    fn normalize_prompt_plan_infers_all_day_add_from_date_only_request() {
+        let plan = PromptPlan {
+            action: PromptActionWire::Update,
+            id: Some("13日".to_string()),
+            title: None,
+            title_suffix: None,
+            date: None,
+            from: None,
+            to: None,
+            at: None,
+            until: None,
+            duration: None,
+            all_day: None,
+            description: None,
+            clear_description: None,
+            start: None,
+            end: None,
+            visibility: None,
+            scope: None,
+            web: None,
+            preserve_time: None,
+        };
+
+        let normalized = normalize_prompt_plan(plan, "13日は「有給」で設定", anchor());
+        assert!(matches!(normalized.action, PromptActionWire::Add));
+        assert_eq!(normalized.title.as_deref(), Some("有給"));
+        assert_eq!(normalized.date.as_deref(), Some("2026-03-13"));
+        assert_eq!(normalized.all_day, Some(true));
+        assert!(normalized.id.is_none());
     }
 }

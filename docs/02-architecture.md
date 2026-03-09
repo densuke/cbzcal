@@ -40,6 +40,7 @@ flowchart LR
 ### `model`
 
 - 予定データ構造
+- 公開/非公開の visibility 表現
 - 時間範囲の検証
 - 更新パッチ適用
 - 複製時の開始/終了時刻調整
@@ -73,7 +74,7 @@ cbzcal events --prompt "明日の15時から1時間、打ち合わせで追加"
 `events` は subcommand 省略時に `list` として動きます。  
 通常出力は人間向けのテキストで、`--json` を付けたときだけ JSON を返します。  
 `-v` は認証経路やセッション再利用の補助情報を標準エラーに出します。
-`--prompt` は実行前に必ず解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。`--yes` は `list/add/clone` のみ省略可能で、`update/delete` では使えません。
+`--prompt` は実行前に必ず解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。`--yes` は `list/add/clone` のみ省略可能で、`update/delete` では使えません。`add` では `公開` / `非公開` の意図を `--public` / `--private` に解釈します。
 
 ## `cybozu-html` バックエンドの想定責務
 

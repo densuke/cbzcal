@@ -695,6 +695,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `attendees`, `facility`, `calendar` は未対応
 - 秒を含む時刻は未対応で、分単位前提
 - 返り値の `description` は送信値を返すが、一覧 HTML からはまだ再抽出していない
+- 公開方法は `Private` radio を使って `公開` / `非公開` を切り替えられる
 
 ### 18. `events update` 実装メモ
 
@@ -706,6 +707,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `id` は `sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合 ID をそのまま使う
 - `ScheduleModify` form を実取得し、現在値を `CalendarEvent` に復元したうえで patch を適用する
 - `title`, `description`, `start`, `end` のみ更新対象にし、それ以外は未対応として弾く
+- `Private` の現在値も form から復元し、未変更時はそのまま維持する
 - 送信後は対象週の `ScheduleIndex` を再取得し、同じ `sEID` で更新後の予定を引き直す
 
 実サイト確認結果:

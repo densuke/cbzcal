@@ -67,6 +67,7 @@ cargo run -- -v events list --date today
 ```
 
 自然文から引数を組み立てたい場合は `--prompt` を使います。実行前に解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。
+`非公開で` のような文言は `events add --private` として解釈します。明示がなければ公開です。
 
 ```bash
 cargo run -- events --prompt "明日の15時から1時間、『伊藤様と打ち合わせ』で追加"
@@ -175,7 +176,7 @@ cargo run -- events clone \
   --start 2099-01-11T14:00:00+09:00
 ```
 
-`cybozu-html` の `events clone` は現時点で通常予定の単日複製のみ対応です。`short_id` から元予定を解決し、`ScheduleEntry?mode=reuse` を使って複製します。参加者・施設・繰り返し予定はまだ扱えません。
+`cybozu-html` の `events clone` は現時点で通常予定の単日複製のみ対応です。`short_id` から元予定を解決し、`ScheduleEntry?mode=reuse` を使って複製します。参加者・施設・繰り返し予定はまだ扱えません。公開方法は元予定を引き継ぎます。
 
 予定を削除します。
 
