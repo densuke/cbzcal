@@ -6,8 +6,7 @@
 ## 現状
 
 - `fixture` バックエンドでは、予定の一覧取得・追加・更新・複製・削除をローカル JSON に対して実行できます。
-- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` / `events update` / `events delete` まで実サイトで確認済みです。
-- `cybozu-html` の実サイト向け `events clone` は未実装です。対象サイトの HTML/フォーム契約を採取してから実装を進める前提です。
+- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` / `events update` / `events clone` / `events delete` まで実サイトで確認済みです。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
@@ -76,7 +75,7 @@ cargo run -- events list \
 `cybozu-html` では現時点で `description` / `attendees` / `facility` は一覧から未抽出です。  
 また、グループ週表示では共有予定が参加者ごとに重複して見えるため、CLI では `sEID + Date + BDate` 単位で 1 件に畳み、さらに現在ユーザーの `UID` 行だけを取得対象にしています。
 
-Cybozu 系イベントの出力には `short_id` を含めます。形式は `sEID@YYYY-MM-DD` で、`update` / `delete` / 今後の `clone` にそのまま渡せます。
+Cybozu 系イベントの出力には `short_id` を含めます。形式は `sEID@YYYY-MM-DD` で、`update` / `clone` / `delete` にそのまま渡せます。
 
 予定を追加します。
 
@@ -123,6 +122,17 @@ cargo run -- events update \
 ```
 
 `cybozu-html` の `events update` は現時点で通常予定の単日更新のみ対応です。更新できるのは `title` / `description` / `start` / `end` だけで、`--attendee`、`--facility`、`--calendar`、繰り返し予定はまだ扱えません。
+
+予定を複製します。
+
+```bash
+cargo run -- events clone \
+  --id '3096828@2099-01-10' \
+  --title-suffix " (複製)" \
+  --start 2099-01-11T14:00:00+09:00
+```
+
+`cybozu-html` の `events clone` は現時点で通常予定の単日複製のみ対応です。`short_id` から元予定を解決し、`ScheduleEntry?mode=reuse` を使って複製します。参加者・施設・繰り返し予定はまだ扱えません。
 
 予定を削除します。
 

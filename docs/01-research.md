@@ -644,7 +644,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `events add` で未対応の参加者追加、設備予約、複数日予定の分岐を採る
 - `events update` で未対応の参加者変更、設備変更、繰り返し予定変更の分岐を採る
 - `events delete` で未対応の参加者単位削除、繰り返し予定削除の分岐を採る
-- `events clone` のフォーム送信を実装する
+- `events clone` で未対応の参加者付き予定、設備付き予定、繰り返し予定の分岐を採る
 - `空き時間を確認する` や参加者検索時の補助リクエストを、必要なら別途採る
 
 ### 17. `events add` 実装メモ
@@ -749,10 +749,33 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 
 - `events list` / `events add` / `events update` の JSON 出力に `short_id` を含める
 - `events update --id 3096817@2099-01-09` のように短縮 ID を直接受け付ける
-- `events delete --id 3096817@2099-01-09` も同様に受け付ける
+- `events clone --id 3096817@2099-01-09` / `events delete --id 3096817@2099-01-09` も同様に受け付ける
 - 短縮 ID が渡された場合は、対象週の `ScheduleIndex` を headless で取得して正規 ID に解決する
 
 実サイト確認結果:
 
 - `3096817@2099-01-09` を使って `events update` を実行できた
 - 同じ `short_id` を使って `events delete` を実行できた
+
+### 21. `events clone` 実装メモ
+
+2026-03-09 時点で、`.cbzcal.toml` の `cybozu-html` 設定を使い、ヘッドレスで `events clone` を実サイトに対して実行できるところまで確認しました。
+
+現時点の実装範囲:
+
+- 対応画面は `ScheduleEntry?mode=reuse`
+- 元予定の指定には複合 ID と `short_id` の両方を使える
+- `ScheduleEntry` の再利用フォームを実取得し、元予定の title / description / start / end を復元して override を適用する
+- 送信時は `ScheduleEntry` の通常登録と同じ `Entry=登録する` を使う
+- 送信後は対象週の `ScheduleIndex` を再取得し、新規 occurrence を特定する
+
+実サイト確認結果:
+
+- `3096828@2099-01-10` を元に `--title-suffix " (複製)" --start 2099-01-11T14:00:00+09:00` を実行できた
+- 作成された複製予定の `short_id` は `3096832@2099-01-11` だった
+
+現時点の制約:
+
+- 通常予定の単日複製のみ
+- 参加者、施設、カレンダーは未対応
+- 繰り返し予定は `ScheduleRegularEntry?mode=reuse` 系のため未対応

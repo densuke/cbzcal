@@ -621,6 +621,42 @@ impl CybozuHtmlBackend {
         Ok(response)
     }
 
+    fn schedule_reuse_entry_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleEntry");
+            query.append_pair("sEID", &identity.seid);
+            query.append_pair("Date", &identity.date);
+            query.append_pair("BDate", &identity.bdate);
+            query.append_pair("UID", &identity.uid);
+            query.append_pair("GID", &identity.gid);
+            query.append_pair("cp", "sgv");
+            query.append_pair("mode", "reuse");
+        }
+
+        Ok(url.to_string())
+    }
+
+    fn fetch_schedule_reuse_entry(
+        &self,
+        basic_credentials: &Option<CredentialPair>,
+        identity: &ScheduleViewIdentity,
+    ) -> Result<ResponseSnapshot> {
+        let url = self.schedule_reuse_entry_url(identity)?;
+        let response = self
+            .get_following_redirects(&url, basic_credentials)
+            .with_context(|| format!("ScheduleEntry(mode=reuse) の取得に失敗しました: {url}"))?;
+        if !is_schedule_entry_page(&response.url, &response.body) {
+            bail!(
+                "ScheduleEntry(mode=reuse) に到達できませんでした: {}",
+                response.url
+            );
+        }
+        Ok(response)
+    }
+
     fn schedule_modify_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
         let mut url = Url::parse(&self.config.base_url)?;
         {
@@ -794,13 +830,6 @@ impl CybozuHtmlBackend {
             body,
         })
     }
-
-    fn pending_contract_error(&self, operation: &str) -> anyhow::Error {
-        anyhow::anyhow!(
-            "`{operation}` は未実装です。{} の HTML/フォーム契約を採取し、docs/03-development-flow.md の Phase 1 を完了してから有効化してください",
-            self.config.base_url
-        )
-    }
 }
 
 impl CalendarBackend for CybozuHtmlBackend {
@@ -928,7 +957,61 @@ impl CalendarBackend for CybozuHtmlBackend {
     }
 
     fn clone_event(&mut self, _id: &str, _overrides: CloneOverrides) -> Result<CalendarEvent> {
-        bail!(self.pending_contract_error("events clone"));
+        let (basic_credentials, identity) = self.resolve_event_identity(_id)?;
+        let schedule_entry = self.fetch_schedule_reuse_entry(&basic_credentials, &identity)?;
+        let mut form = parse_html_form(&schedule_entry.body, &schedule_entry.url, "ScheduleEntry")?;
+        let source_event = parse_schedule_form_event(&form.fields, &identity)?;
+        let cloned_event = source_event.clone_with_overrides(&_overrides, "pending".to_string())?;
+        validate_supported_clone_event(&cloned_event)?;
+        let clone_input = NewEvent {
+            title: cloned_event.title.clone(),
+            description: cloned_event.description.clone(),
+            starts_at: cloned_event.starts_at,
+            ends_at: cloned_event.ends_at,
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+        };
+        validate_supported_add_input(&clone_input)?;
+        let context = ScheduleIndexContext {
+            current_user_uid: identity.uid.clone(),
+            gid: identity.gid.clone(),
+            week_start: week_start(
+                clone_input
+                    .starts_at
+                    .with_timezone(&jst_offset())
+                    .date_naive(),
+            ),
+        };
+        populate_schedule_entry_form(&mut form.fields, &clone_input, &context);
+        let submit_response = self.post_form_following_redirects(
+            &form.action_url,
+            &form.fields,
+            &schedule_entry.url,
+            &basic_credentials,
+        )?;
+        if is_login_page(&submit_response.url, &submit_response.body) {
+            bail!("予定複製後にログイン画面へ戻りました。セッションを維持できていません");
+        }
+
+        let target_week = week_start(
+            clone_input
+                .starts_at
+                .with_timezone(&jst_offset())
+                .date_naive(),
+        );
+        let week_page =
+            self.fetch_schedule_index(&basic_credentials, Some(target_week), Some(&identity.gid))?;
+        let calendar_name = extract_calendar_name(&week_page.body);
+        let events = parse_schedule_index_events(
+            &week_page.body,
+            &week_page.url,
+            calendar_name.as_deref(),
+            Some(&identity.uid),
+        )?;
+
+        find_created_event(events, &clone_input)
+            .ok_or_else(|| anyhow::anyhow!("複製後の予定を ScheduleIndex から特定できませんでした"))
     }
 
     fn delete_event(&mut self, _id: &str) -> Result<()> {
@@ -1216,6 +1299,19 @@ fn validate_supported_update_event(event: &CalendarEvent) -> Result<()> {
     Ok(())
 }
 
+fn validate_supported_clone_event(event: &CalendarEvent) -> Result<()> {
+    let starts_at = event.starts_at.with_timezone(&jst_offset());
+    let ends_at = event.ends_at.with_timezone(&jst_offset());
+    if starts_at.second() != 0 || ends_at.second() != 0 {
+        bail!("現時点の `events clone` は分単位のみ対応です");
+    }
+    if !is_supported_single_day_event(starts_at, ends_at) {
+        bail!("現時点の `events clone` は単日予定のみ対応です");
+    }
+
+    Ok(())
+}
+
 fn parse_html_form(html: &str, page_url: &str, form_name: &str) -> Result<HtmlForm> {
     let document = Html::parse_document(html);
     let form_selector = Selector::parse(&format!("form[name=\"{form_name}\"]"))
@@ -1358,7 +1454,7 @@ fn populate_schedule_entry_form(
     set_form_value(fields, "Entry", "登録する");
 }
 
-fn parse_schedule_modify_event(
+fn parse_schedule_form_event(
     fields: &[(String, String)],
     identity: &ScheduleViewIdentity,
 ) -> Result<CalendarEvent> {
@@ -1378,6 +1474,13 @@ fn parse_schedule_modify_event(
         calendar: None,
         version: 1,
     })
+}
+
+fn parse_schedule_modify_event(
+    fields: &[(String, String)],
+    identity: &ScheduleViewIdentity,
+) -> Result<CalendarEvent> {
+    parse_schedule_form_event(fields, identity)
 }
 
 fn parse_schedule_form_date(fields: &[(String, String)]) -> Result<NaiveDate> {
