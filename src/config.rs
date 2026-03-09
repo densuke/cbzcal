@@ -309,6 +309,7 @@ fn config_search_paths() -> Result<Vec<PathBuf>> {
     paths.push(env::current_dir()?.join(".cbzcal.toml"));
     paths.push(env::current_dir()?.join(".cbzcal.yml"));
 
+    #[cfg(not(windows))]
     if let Some(xdg_config_home) = xdg_config_home() {
         paths.push(xdg_config_home.join("cbzcal").join("config.toml"));
         paths.push(xdg_config_home.join("cbzcal").join("config.yml"));
@@ -322,28 +323,38 @@ fn config_search_paths() -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+#[cfg(not(windows))]
 fn xdg_config_home() -> Option<PathBuf> {
     env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| home_dir().map(|home| home.join(".config")))
 }
 
+#[cfg(not(windows))]
 fn xdg_state_home() -> Option<PathBuf> {
     env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
 }
 
+#[cfg(not(windows))]
 fn xdg_cache_home() -> Option<PathBuf> {
     env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| home_dir().map(|home| home.join(".cache")))
 }
 
+#[cfg(unix)]
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
 }
 
+#[cfg(windows)]
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("USERPROFILE").map(PathBuf::from)
+}
+
+#[cfg(not(windows))]
 fn default_session_cache_path() -> PathBuf {
     xdg_state_home()
         .or_else(home_dir)
@@ -352,11 +363,28 @@ fn default_session_cache_path() -> PathBuf {
         .join("session-cookies.json")
 }
 
+#[cfg(windows)]
+fn default_session_cache_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join(".cbzcal")
+        .join("session-cookies.json")
+}
+
+#[cfg(not(windows))]
 fn default_events_cache_path() -> PathBuf {
     xdg_cache_home()
         .or_else(home_dir)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .join("cbzcal")
+        .join("events-cache.json")
+}
+
+#[cfg(windows)]
+fn default_events_cache_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join(".cbzcal")
         .join("events-cache.json")
 }
 
@@ -499,6 +527,7 @@ session_cache_path = "../state/cookies.json"
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn cybozu_html_default_session_cache_path_uses_xdg_state_home() {
         let home = env::var_os("HOME");

@@ -288,6 +288,7 @@ fn doctor_discovers_toml_config_in_current_directory_when_yaml_is_absent() {
         .stdout(contains(".cbzcal.toml"));
 }
 
+#[cfg(not(windows))]
 #[test]
 fn doctor_prefers_xdg_config_over_home_config() {
     let root = tempfile::tempdir().expect("tempdir");
