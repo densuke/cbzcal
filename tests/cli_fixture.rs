@@ -75,6 +75,7 @@ fn add_and_list_work_against_fixture_backend() {
             config_path.to_str().expect("path"),
             "events",
             "add",
+            "--json",
             "--title",
             "設計レビュー",
             "--start",
@@ -112,6 +113,112 @@ fn add_and_list_work_against_fixture_backend() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["title"], "設計レビュー");
     assert_eq!(json["backend"], "fixture");
+}
+
+#[test]
+fn event_mutations_render_human_output_by_default() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let config_path = write_config(tempdir.path(), &tempdir.path().join("calendar.json"));
+
+    cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "add",
+            "--title",
+            "設計レビュー",
+            "--date",
+            "2026-03-12",
+            "--at",
+            "10:00",
+            "--until",
+            "11:00",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("追加しました"))
+        .stdout(contains("2026-03-12 (Thu)"))
+        .stdout(contains("10:00-11:00  設計レビュー"))
+        .stdout(contains(" ["))
+        .stdout(contains("]"));
+
+    let add_json = cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "add",
+            "--json",
+            "--title",
+            "削除対象",
+            "--date",
+            "2026-03-13",
+            "--at",
+            "09:00",
+            "--until",
+            "10:00",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let add_json: Value = serde_json::from_slice(&add_json).expect("json");
+    let id = add_json["data"]["id"].as_str().expect("id").to_string();
+
+    cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "update",
+            "--id",
+            &id,
+            "--title",
+            "更新後",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("更新しました"))
+        .stdout(contains("更新後"));
+
+    let clone_json = cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "clone",
+            "--json",
+            "--id",
+            &id,
+            "--title-suffix",
+            " (複製)",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let clone_json: Value = serde_json::from_slice(&clone_json).expect("json");
+    let clone_id = clone_json["data"]["id"]
+        .as_str()
+        .expect("clone id")
+        .to_string();
+
+    cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "delete",
+            "--id",
+            &clone_id,
+        ])
+        .assert()
+        .success()
+        .stdout(contains("削除しました"))
+        .stdout(contains("(複製)"));
 }
 
 #[test]

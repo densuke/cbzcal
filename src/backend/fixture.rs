@@ -123,11 +123,11 @@ impl CalendarBackend for FixtureBackend {
         Ok(cloned)
     }
 
-    fn delete_event(&mut self, id: &str) -> Result<()> {
+    fn delete_event(&mut self, id: &str) -> Result<CalendarEvent> {
         let index = self.event_index(id)?;
-        self.store.events.remove(index);
+        let deleted = self.store.events.remove(index);
         self.persist()?;
-        Ok(())
+        Ok(deleted)
     }
 }
 
@@ -197,7 +197,8 @@ mod tests {
         assert_eq!(cloned.starts_at, ts("2026-03-10T14:00:00+09:00"));
         assert_eq!(cloned.ends_at, ts("2026-03-10T15:00:00+09:00"));
 
-        backend.delete_event(&created.id).expect("delete");
+        let deleted = backend.delete_event(&created.id).expect("delete");
+        assert_eq!(deleted.id, created.id);
         let remaining = backend
             .list_events(ListQuery {
                 from: None,

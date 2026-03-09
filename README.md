@@ -85,6 +85,8 @@ Cybozu 系イベントの短縮 ID は `sEID@YYYY-MM-DD` 形式で、`update` / 
 
 予定を追加します。
 
+`events add` / `update` / `clone` / `delete` も、既定では人間向けの結果表示です。JSON が必要な場合だけ `--json` を付けます。
+
 ```bash
 cargo run -- events add \
   --title "設計レビュー" \

@@ -1014,8 +1014,15 @@ impl CalendarBackend for CybozuHtmlBackend {
             .ok_or_else(|| anyhow::anyhow!("複製後の予定を ScheduleIndex から特定できませんでした"))
     }
 
-    fn delete_event(&mut self, _id: &str) -> Result<()> {
+    fn delete_event(&mut self, _id: &str) -> Result<CalendarEvent> {
         let (basic_credentials, identity) = self.resolve_event_identity(_id)?;
+        let schedule_modify = self.fetch_schedule_modify(&basic_credentials, &identity)?;
+        let schedule_modify_form = parse_html_form(
+            &schedule_modify.body,
+            &schedule_modify.url,
+            "ScheduleModify",
+        )?;
+        let deleted_event = parse_schedule_modify_event(&schedule_modify_form.fields, &identity)?;
         let schedule_delete = self.fetch_schedule_delete(&basic_credentials, &identity)?;
         let mut form = parse_html_form(
             &schedule_delete.body,
@@ -1054,7 +1061,7 @@ impl CalendarBackend for CybozuHtmlBackend {
             );
         }
 
-        Ok(())
+        Ok(deleted_event)
     }
 }
 

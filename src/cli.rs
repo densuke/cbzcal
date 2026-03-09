@@ -80,6 +80,8 @@ impl ListArgs {
 
 #[derive(Debug, Args, Clone)]
 pub struct AddArgs {
+    #[arg(long, help = "JSON 形式で出力する")]
+    pub json: bool,
     #[arg(long)]
     pub title: String,
     #[arg(long, help = "厳密な開始日時。RFC3339 形式")]
@@ -121,6 +123,8 @@ impl AddArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
+    #[arg(long, help = "JSON 形式で出力する")]
+    pub json: bool,
     #[arg(long)]
     pub id: String,
     #[arg(long)]
@@ -200,6 +204,8 @@ impl UpdateArgs {
 
 #[derive(Debug, Args)]
 pub struct CloneArgs {
+    #[arg(long, help = "JSON 形式で出力する")]
+    pub json: bool,
     #[arg(long)]
     pub id: String,
     #[arg(long)]
@@ -229,6 +235,8 @@ impl CloneArgs {
 
 #[derive(Debug, Args)]
 pub struct DeleteArgs {
+    #[arg(long, help = "JSON 形式で出力する")]
+    pub json: bool,
     #[arg(long)]
     pub id: String,
 }
@@ -535,6 +543,7 @@ mod tests {
     #[test]
     fn add_supports_date_and_until() {
         let args = AddArgs {
+            json: false,
             title: "打合せ".to_string(),
             start: None,
             end: None,
@@ -557,6 +566,7 @@ mod tests {
     #[test]
     fn add_supports_date_and_duration() {
         let args = AddArgs {
+            json: false,
             title: "作業".to_string(),
             start: None,
             end: None,
@@ -579,6 +589,7 @@ mod tests {
     #[test]
     fn add_defaults_date_only_to_all_day() {
         let args = AddArgs {
+            json: false,
             title: "休み".to_string(),
             start: None,
             end: None,
@@ -651,6 +662,7 @@ mod tests {
     #[test]
     fn rejects_mixing_strict_and_friendly_add_options() {
         let args = AddArgs {
+            json: false,
             title: "混在".to_string(),
             start: Some(ts("2026-03-10T09:00:00+09:00")),
             end: Some(ts("2026-03-10T10:00:00+09:00")),

@@ -10,12 +10,6 @@ use crate::{
 };
 
 #[derive(Debug, Serialize)]
-struct DeleteResult<'a> {
-    deleted: bool,
-    id: &'a str,
-}
-
-#[derive(Debug, Serialize)]
 struct EventEnvelope<T: Serialize> {
     backend: &'static str,
     data: T,
@@ -58,39 +52,24 @@ pub fn execute(cli: Cli) -> Result<String> {
                 }
                 EventsCommand::Add(args) => {
                     let event = backend.add_event(args.new_event()?)?;
-                    render_json(&EventEnvelope {
-                        backend: backend.name(),
-                        data: render_event(&event),
-                    })
+                    render_event_result("追加しました", backend.name(), &event, args.json)
                 }
                 EventsCommand::Update(args) => {
                     let patch = args.patch()?;
                     let event = backend.update_event(&args.id, patch)?;
-                    render_json(&EventEnvelope {
-                        backend: backend.name(),
-                        data: render_event(&event),
-                    })
+                    render_event_result("更新しました", backend.name(), &event, args.json)
                 }
                 EventsCommand::Clone(args) => {
                     let overrides = args.overrides()?;
                     let event = backend.clone_event(&args.id, overrides)?;
-                    render_json(&EventEnvelope {
-                        backend: backend.name(),
-                        data: render_event(&event),
-                    })
+                    render_event_result("複製しました", backend.name(), &event, args.json)
                 }
                 EventsCommand::Delete(args) => {
                     if args.id.is_empty() {
                         bail!("削除対象の ID が空です");
                     }
-                    backend.delete_event(&args.id)?;
-                    render_json(&EventEnvelope {
-                        backend: backend.name(),
-                        data: DeleteResult {
-                            deleted: true,
-                            id: &args.id,
-                        },
-                    })
+                    let event = backend.delete_event(&args.id)?;
+                    render_event_result("削除しました", backend.name(), &event, args.json)
                 }
             }
         }
@@ -110,6 +89,26 @@ fn render_event(event: &CalendarEvent) -> ApiEvent<'_> {
 
 fn render_events(events: &[CalendarEvent]) -> Vec<ApiEvent<'_>> {
     events.iter().map(render_event).collect()
+}
+
+fn render_event_result(
+    action: &str,
+    backend: &'static str,
+    event: &CalendarEvent,
+    json: bool,
+) -> Result<String> {
+    if json {
+        render_json(&EventEnvelope {
+            backend,
+            data: render_event(event),
+        })
+    } else {
+        let mut out = String::new();
+        out.push_str(action);
+        out.push('\n');
+        out.push_str(&render_single_event(event));
+        Ok(out)
+    }
 }
 
 fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
@@ -154,6 +153,20 @@ fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
     }
 
     Ok(out)
+}
+
+fn render_single_event(event: &CalendarEvent) -> String {
+    let date = event.starts_at.date_naive();
+    format!(
+        "  {:04}-{:02}-{:02} ({})\n  {}  {} [{}]",
+        date.year(),
+        date.month(),
+        date.day(),
+        weekday_abbr(date.weekday()),
+        format_event_time(event),
+        event.title,
+        event.short_id(),
+    )
 }
 
 fn format_event_time(event: &CalendarEvent) -> String {
@@ -252,6 +265,35 @@ mod tests {
         assert_eq!(
             rendered,
             "2026-03-09 (Mon)\n  13:30-14:30  サンプル設定 [3096840@2026-03-09]\n\n2026-03-10 (Tue)\n  終日  休み [3096808@2026-03-10]"
+        );
+    }
+
+    #[test]
+    fn renders_human_readable_single_event_result() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+        let event = CalendarEvent {
+            id: "sEID=3096840&UID=379&GID=183&Date=da.2026.3.9&BDate=da.2026.3.9".to_string(),
+            title: "サンプル設定".to_string(),
+            description: None,
+            starts_at: jst
+                .with_ymd_and_hms(2026, 3, 9, 13, 30, 0)
+                .single()
+                .expect("start"),
+            ends_at: jst
+                .with_ymd_and_hms(2026, 3, 9, 14, 30, 0)
+                .single()
+                .expect("end"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            version: 1,
+        };
+
+        let rendered =
+            render_event_result("追加しました", "fixture", &event, false).expect("render");
+        assert_eq!(
+            rendered,
+            "追加しました\n  2026-03-09 (Mon)\n  13:30-14:30  サンプル設定 [3096840@2026-03-09]"
         );
     }
 }
