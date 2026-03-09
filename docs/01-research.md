@@ -642,7 +642,8 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 実登録後に `list -> view -> modify -> delete` の往復で `sEID` と hidden の整合性を確認する
 - `events add` で未対応の参加者追加、設備予約、複数日予定の分岐を採る
 - `events update` で未対応の参加者変更、設備変更、繰り返し予定変更の分岐を採る
-- `events clone` / `events delete` のフォーム送信を実装する
+- `events delete` で未対応の参加者単位削除、繰り返し予定削除の分岐を採る
+- `events clone` のフォーム送信を実装する
 - `空き時間を確認する` や参加者検索時の補助リクエストを、必要なら別途採る
 
 ### 17. `events add` 実装メモ
@@ -710,3 +711,26 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `attendees`, `facility`, `calendar` の更新は未対応
 - 繰り返し予定は `ScheduleRegularModify` 系のため未対応
 - `events list` は description をまだ再抽出しないので、更新後一覧では `description` が `null` のまま
+
+### 19. `events delete` 実装メモ
+
+2026-03-09 時点で、`.cbzcal.toml` の `cybozu-html` 設定を使い、ヘッドレスで `events delete` を実サイトに対して実行できるところまで確認しました。
+
+現時点の実装範囲:
+
+- 対応画面は `ScheduleDelete`
+- `id` は `sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合 ID をそのまま使う
+- `ScheduleDelete` form を実取得し、`Member=all` の通常削除だけを許可する
+- 送信時は `Yes=削除する` を付けて `POST ag.cgi?` する
+- 送信後は対象週の `ScheduleIndex` を再取得し、同じ `sEID` が消えていることを確認する
+
+実サイト確認結果:
+
+- 2099 年に作成していた検証用予定 `sEID=3096796`, `3096804`, `3096808` を headless で削除できた
+- `events list --from 2099-01-05 --for 4d` の結果は空配列になった
+
+現時点の制約:
+
+- 通常予定の全体削除のみ
+- 複数参加者予定の `Member=single` には未対応
+- 繰り返し予定の `Apply=this|after|all` 分岐には未対応

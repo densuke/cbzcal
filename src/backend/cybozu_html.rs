@@ -647,6 +647,38 @@ impl CybozuHtmlBackend {
         Ok(response)
     }
 
+    fn schedule_delete_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleDelete");
+            query.append_pair("UID", &identity.uid);
+            query.append_pair("GID", &identity.gid);
+            query.append_pair("Date", &identity.date);
+            query.append_pair("BDate", &identity.bdate);
+            query.append_pair("sEID", &identity.seid);
+            query.append_pair("cp", "sgv");
+        }
+
+        Ok(url.to_string())
+    }
+
+    fn fetch_schedule_delete(
+        &self,
+        basic_credentials: &Option<CredentialPair>,
+        identity: &ScheduleViewIdentity,
+    ) -> Result<ResponseSnapshot> {
+        let url = self.schedule_delete_url(identity)?;
+        let response = self
+            .get_following_redirects(&url, basic_credentials)
+            .with_context(|| format!("ScheduleDelete の取得に失敗しました: {url}"))?;
+        if !is_schedule_delete_page(&response.url, &response.body) {
+            bail!("ScheduleDelete に到達できませんでした: {}", response.url);
+        }
+        Ok(response)
+    }
+
     fn login_post_url(&self) -> Result<String> {
         self.config
             .office_login_post_url
@@ -895,7 +927,47 @@ impl CalendarBackend for CybozuHtmlBackend {
     }
 
     fn delete_event(&mut self, _id: &str) -> Result<()> {
-        bail!(self.pending_contract_error("events delete"));
+        let identity = parse_composite_event_id(_id)?;
+        let (basic_credentials, _) = self.bootstrap_authenticated_schedule_index()?;
+        let schedule_delete = self.fetch_schedule_delete(&basic_credentials, &identity)?;
+        let mut form = parse_html_form(
+            &schedule_delete.body,
+            &schedule_delete.url,
+            "ScheduleDelete",
+        )?;
+        validate_supported_delete_form(&form.fields)?;
+        populate_schedule_delete_form(&mut form.fields, &identity);
+        let submit_response = self.post_form_following_redirects(
+            &form.action_url,
+            &form.fields,
+            &schedule_delete.url,
+            &basic_credentials,
+        )?;
+        if is_login_page(&submit_response.url, &submit_response.body) {
+            bail!("予定削除後にログイン画面へ戻りました。セッションを維持できていません");
+        }
+
+        let target_week = parse_da_date(&identity.bdate)
+            .or_else(|| parse_da_date(&identity.date).map(week_start))
+            .ok_or_else(|| anyhow::anyhow!("削除確認用の週情報を解釈できません"))?;
+        let week_page =
+            self.fetch_schedule_index(&basic_credentials, Some(target_week), Some(&identity.gid))?;
+        let calendar_name = extract_calendar_name(&week_page.body);
+        let events = parse_schedule_index_events(
+            &week_page.body,
+            &week_page.url,
+            calendar_name.as_deref(),
+            Some(&identity.uid),
+        )?;
+
+        if find_event_by_seid(events, &identity.seid).is_some() {
+            bail!(
+                "削除後も対象予定が ScheduleIndex に残っています: {}",
+                identity.seid
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -965,6 +1037,10 @@ fn is_schedule_entry_page(url: &str, body: &str) -> bool {
 
 fn is_schedule_modify_page(url: &str, body: &str) -> bool {
     url.contains("ScheduleModify") && body.contains("name=\"ScheduleModify\"")
+}
+
+fn is_schedule_delete_page(url: &str, body: &str) -> bool {
+    url.contains("ScheduleDelete") && body.contains("name=\"ScheduleDelete\"")
 }
 
 fn is_redirect_stub_page(body: &str) -> bool {
@@ -1042,6 +1118,18 @@ fn validate_supported_update_patch(patch: &EventPatch) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_supported_delete_form(fields: &[(String, String)]) -> Result<()> {
+    if form_value(fields, "Apply").is_some() {
+        bail!("現時点の `events delete` は繰り返し予定に未対応です");
+    }
+    match form_value(fields, "Member") {
+        Some("all") => Ok(()),
+        Some("single") => bail!("現時点の `events delete` は参加者単位の削除に未対応です"),
+        Some(value) => bail!("現時点の `events delete` は未対応の削除種別です: {value}"),
+        None => bail!("削除フォームの Member が見つかりません"),
+    }
 }
 
 fn is_supported_single_day_event(
@@ -1376,6 +1464,20 @@ fn format_end_hour(ends_at: DateTime<FixedOffset>, is_all_day: bool) -> String {
     } else {
         ends_at.hour().to_string()
     }
+}
+
+fn populate_schedule_delete_form(
+    fields: &mut Vec<(String, String)>,
+    identity: &ScheduleViewIdentity,
+) {
+    set_form_value(fields, "page", "ScheduleDelete");
+    set_form_value(fields, "sEID", identity.seid.clone());
+    set_form_value(fields, "UID", identity.uid.clone());
+    set_form_value(fields, "GID", identity.gid.clone());
+    set_form_value(fields, "Date", identity.date.clone());
+    set_form_value(fields, "BDate", identity.bdate.clone());
+    set_form_value(fields, "Member", "all");
+    set_form_value(fields, "Yes", "削除する");
 }
 
 fn find_created_event(events: Vec<CalendarEvent>, input: &NewEvent) -> Option<CalendarEvent> {
@@ -2141,5 +2243,45 @@ mod tests {
         assert!(fields.contains(&(String::from("Detail"), String::from("updated title"))));
         assert!(fields.contains(&(String::from("Memo"), String::from("updated memo"))));
         assert!(fields.contains(&(String::from("Modify"), String::from("変更する"))));
+    }
+
+    #[test]
+    fn validates_simple_delete_form() {
+        let fields = vec![("Member".to_string(), "all".to_string())];
+        validate_supported_delete_form(&fields).expect("simple delete should be supported");
+    }
+
+    #[test]
+    fn rejects_delete_form_for_single_member_leave() {
+        let fields = vec![("Member".to_string(), "single".to_string())];
+        let error = validate_supported_delete_form(&fields).expect_err("should reject");
+        assert!(error.to_string().contains("参加者単位"));
+    }
+
+    #[test]
+    fn populates_schedule_delete_form() {
+        let mut fields = vec![
+            ("page".to_string(), "ScheduleDelete".to_string()),
+            ("sEID".to_string(), "3096804".to_string()),
+            ("Date".to_string(), "da.2099.1.7".to_string()),
+            ("BDate".to_string(), "da.2099.1.5".to_string()),
+            ("UID".to_string(), "379".to_string()),
+            ("GID".to_string(), "183".to_string()),
+            ("Member".to_string(), "all".to_string()),
+        ];
+        let identity = ScheduleViewIdentity {
+            uid: "379".to_string(),
+            gid: "183".to_string(),
+            date: "da.2099.1.7".to_string(),
+            bdate: "da.2099.1.5".to_string(),
+            seid: "3096804".to_string(),
+        };
+
+        populate_schedule_delete_form(&mut fields, &identity);
+
+        assert!(fields.contains(&(String::from("page"), String::from("ScheduleDelete"))));
+        assert!(fields.contains(&(String::from("sEID"), String::from("3096804"))));
+        assert!(fields.contains(&(String::from("Member"), String::from("all"))));
+        assert!(fields.contains(&(String::from("Yes"), String::from("削除する"))));
     }
 }
