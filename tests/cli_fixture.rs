@@ -95,6 +95,7 @@ fn add_and_list_work_against_fixture_backend() {
             config_path.to_str().expect("path"),
             "events",
             "list",
+            "--json",
             "--from",
             "2026-03-12T00:00:00+09:00",
             "--to",
@@ -111,6 +112,46 @@ fn add_and_list_work_against_fixture_backend() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["title"], "設計レビュー");
     assert_eq!(json["backend"], "fixture");
+}
+
+#[test]
+fn list_renders_human_readable_output_by_default() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let config_path = write_config(tempdir.path(), &tempdir.path().join("calendar.json"));
+
+    cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "add",
+            "--title",
+            "設計レビュー",
+            "--date",
+            "2026-03-12",
+            "--at",
+            "10:00",
+            "--until",
+            "11:00",
+        ])
+        .assert()
+        .success();
+
+    cargo_bin_cmd!("cbzcal")
+        .args([
+            "--config",
+            config_path.to_str().expect("path"),
+            "events",
+            "list",
+            "--date",
+            "2026-03-12",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("2026-03-12 (Thu)"))
+        .stdout(contains("10:00-11:00  設計レビュー"))
+        .stdout(contains(" ["))
+        .stdout(contains("]"));
 }
 
 #[test]

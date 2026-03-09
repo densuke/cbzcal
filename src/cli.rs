@@ -47,6 +47,8 @@ pub enum EventsCommand {
 
 #[derive(Debug, Args, Clone)]
 pub struct ListArgs {
+    #[arg(long, help = "JSON 形式で出力する")]
+    pub json: bool,
     #[arg(
         long,
         help = "開始日時。RFC3339 のほか、today/tomorrow/3/10/2026-03-10 を指定可能"
@@ -599,6 +601,7 @@ mod tests {
     #[test]
     fn list_supports_date_shortcut() {
         let args = ListArgs {
+            json: false,
             from: None,
             to: None,
             date: Some("today".to_string()),
@@ -613,6 +616,7 @@ mod tests {
     #[test]
     fn list_supports_relative_range_from_today() {
         let args = ListArgs {
+            json: false,
             from: Some("today".to_string()),
             to: None,
             date: None,

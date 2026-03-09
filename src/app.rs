@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use chrono::{Datelike, Timelike};
 use serde::Serialize;
 
 use crate::{
@@ -46,10 +47,14 @@ pub fn execute(cli: Cli) -> Result<String> {
                 EventsCommand::List(args) => {
                     let query: ListQuery = args.query()?;
                     let events = backend.list_events(query.with_default_window())?;
-                    render_json(&EventEnvelope {
-                        backend: backend.name(),
-                        data: render_events(&events),
-                    })
+                    if args.json {
+                        render_json(&EventEnvelope {
+                            backend: backend.name(),
+                            data: render_events(&events),
+                        })
+                    } else {
+                        render_event_list(&events)
+                    }
                 }
                 EventsCommand::Add(args) => {
                     let event = backend.add_event(args.new_event()?)?;
@@ -105,4 +110,148 @@ fn render_event(event: &CalendarEvent) -> ApiEvent<'_> {
 
 fn render_events(events: &[CalendarEvent]) -> Vec<ApiEvent<'_>> {
     events.iter().map(render_event).collect()
+}
+
+fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
+    if events.is_empty() {
+        return Ok("予定はありません".to_string());
+    }
+
+    let mut sorted = events.iter().collect::<Vec<_>>();
+    sorted.sort_by_key(|event| (event.starts_at, event.ends_at, event.title.as_str()));
+
+    let mut out = String::new();
+    let mut current_date = None;
+    for event in sorted {
+        let date = event.starts_at.date_naive();
+        if current_date != Some(date) {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "{:04}-{:02}-{:02} ({})\n",
+                date.year(),
+                date.month(),
+                date.day(),
+                weekday_abbr(date.weekday()),
+            ));
+            current_date = Some(date);
+        }
+
+        out.push_str("  ");
+        out.push_str(&format_event_time(event));
+        out.push_str("  ");
+        out.push_str(&event.title);
+        out.push(' ');
+        out.push('[');
+        out.push_str(&event.short_id());
+        out.push(']');
+        out.push('\n');
+    }
+
+    if out.ends_with('\n') {
+        out.pop();
+    }
+
+    Ok(out)
+}
+
+fn format_event_time(event: &CalendarEvent) -> String {
+    let duration = event.ends_at - event.starts_at;
+    if duration.num_days() == 1
+        && event.starts_at.time().hour() == 0
+        && event.starts_at.time().minute() == 0
+        && event.ends_at.time().hour() == 0
+        && event.ends_at.time().minute() == 0
+    {
+        return "終日".to_string();
+    }
+
+    if event.starts_at.date_naive() == event.ends_at.date_naive() {
+        return format!(
+            "{:02}:{:02}-{:02}:{:02}",
+            event.starts_at.time().hour(),
+            event.starts_at.time().minute(),
+            event.ends_at.time().hour(),
+            event.ends_at.time().minute(),
+        );
+    }
+
+    format!(
+        "{:02}/{:02} {:02}:{:02} -> {:02}/{:02} {:02}:{:02}",
+        event.starts_at.month(),
+        event.starts_at.day(),
+        event.starts_at.time().hour(),
+        event.starts_at.time().minute(),
+        event.ends_at.month(),
+        event.ends_at.day(),
+        event.ends_at.time().hour(),
+        event.ends_at.time().minute(),
+    )
+}
+
+fn weekday_abbr(weekday: chrono::Weekday) -> &'static str {
+    match weekday {
+        chrono::Weekday::Mon => "Mon",
+        chrono::Weekday::Tue => "Tue",
+        chrono::Weekday::Wed => "Wed",
+        chrono::Weekday::Thu => "Thu",
+        chrono::Weekday::Fri => "Fri",
+        chrono::Weekday::Sat => "Sat",
+        chrono::Weekday::Sun => "Sun",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{FixedOffset, TimeZone};
+
+    use super::*;
+
+    #[test]
+    fn renders_human_readable_event_list() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+        let events = vec![
+            CalendarEvent {
+                id: "sEID=3096840&UID=379&GID=183&Date=da.2026.3.9&BDate=da.2026.3.9".to_string(),
+                title: "サンプル設定".to_string(),
+                description: None,
+                starts_at: jst
+                    .with_ymd_and_hms(2026, 3, 9, 13, 30, 0)
+                    .single()
+                    .expect("start"),
+                ends_at: jst
+                    .with_ymd_and_hms(2026, 3, 9, 14, 30, 0)
+                    .single()
+                    .expect("end"),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                version: 1,
+            },
+            CalendarEvent {
+                id: "sEID=3096808&UID=379&GID=183&Date=da.2026.3.10&BDate=da.2026.3.10".to_string(),
+                title: "休み".to_string(),
+                description: None,
+                starts_at: jst
+                    .with_ymd_and_hms(2026, 3, 10, 0, 0, 0)
+                    .single()
+                    .expect("start"),
+                ends_at: jst
+                    .with_ymd_and_hms(2026, 3, 11, 0, 0, 0)
+                    .single()
+                    .expect("end"),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                version: 1,
+            },
+        ];
+
+        let rendered = render_event_list(&events).expect("render");
+        assert_eq!(
+            rendered,
+            "2026-03-09 (Mon)\n  13:30-14:30  サンプル設定 [3096840@2026-03-09]\n\n2026-03-10 (Tue)\n  終日  休み [3096808@2026-03-10]"
+        );
+    }
 }
