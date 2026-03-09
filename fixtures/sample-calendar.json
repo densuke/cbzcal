@@ -1,0 +1,32 @@
+{
+  "events": [
+    {
+      "id": "event-001",
+      "title": "朝会",
+      "description": "進捗確認",
+      "starts_at": "2026-03-10T09:30:00+09:00",
+      "ends_at": "2026-03-10T10:00:00+09:00",
+      "attendees": [
+        "alice",
+        "bob"
+      ],
+      "facility": "会議室A",
+      "calendar": "開発",
+      "version": 1
+    },
+    {
+      "id": "event-002",
+      "title": "顧客打ち合わせ",
+      "description": "定例報告",
+      "starts_at": "2026-03-11T13:00:00+09:00",
+      "ends_at": "2026-03-11T14:00:00+09:00",
+      "attendees": [
+        "sales",
+        "pm"
+      ],
+      "facility": "オンライン",
+      "calendar": "営業",
+      "version": 3
+    }
+  ]
+}
