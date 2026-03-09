@@ -1,0 +1,28 @@
+backend = "fixture"
+
+[fixture]
+path = "fixtures/sample-calendar.json"
+
+[cybozu-html]
+# 最初の接続先。通常は /o/ag.cgi
+base_url = "https://example.cybozu.com/o/ag.cgi"
+
+# Cybozu Office のログイン画面とログイン POST 先。
+# サイト固有差分があるため、base_url から推測できても明示しておく。
+office_login_url = "https://example.cybozu.com/login"
+office_login_post_url = "https://example.cybozu.com/api/auth/redirect.do"
+
+# 前段 Basic 認証がある場合に使う環境変数名
+basic_username_env = "CBZCAL_BASIC_USER"
+basic_password_env = "CBZCAL_BASIC_PASS"
+# 一時検証では平文も可。ただし 0400/0600 前提で env より優先されない
+# basic_username = "temporary-basic-user"
+# basic_password = "temporary-basic-pass"
+
+# Cybozu Office 本体のログインに使う環境変数名
+office_username_env = "CBZCAL_OFFICE_USER"
+office_password_env = "CBZCAL_OFFICE_PASS"
+# office_username = "temporary-office-user"
+# office_password = "temporary-office-pass"
+
+user_agent = "cbzcal/0.1.0"
