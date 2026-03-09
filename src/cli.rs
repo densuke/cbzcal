@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeDelta, TimeZone, Utc};
 use clap::ArgAction;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::backend::ListQuery;
 use crate::model::{CloneOverrides, EventPatch, NewEvent};
@@ -52,6 +52,13 @@ pub enum EventsCommand {
     Update(UpdateArgs),
     Clone(CloneArgs),
     Delete(DeleteArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ApplyScopeArg {
+    This,
+    After,
+    All,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -134,8 +141,12 @@ impl AddArgs {
 pub struct UpdateArgs {
     #[arg(long, help = "JSON 形式で出力する")]
     pub json: bool,
+    #[arg(long, help = "GUI で追加入力するため対象予定の画面をブラウザで開く")]
+    pub web: bool,
     #[arg(long)]
     pub id: String,
+    #[arg(long, value_enum, help = "繰り返し予定の更新範囲。this/after/all")]
+    pub scope: Option<ApplyScopeArg>,
     #[arg(long)]
     pub title: Option<String>,
     #[arg(long, value_parser = parse_timestamp)]
@@ -203,10 +214,6 @@ impl UpdateArgs {
             },
         };
 
-        if patch.is_empty() {
-            bail!("更新対象がありません。少なくとも 1 つの変更オプションを指定してください");
-        }
-
         Ok(patch)
     }
 }
@@ -248,6 +255,8 @@ pub struct DeleteArgs {
     pub json: bool,
     #[arg(long)]
     pub id: String,
+    #[arg(long, value_enum, help = "繰り返し予定の削除範囲。this/after/all")]
+    pub scope: Option<ApplyScopeArg>,
 }
 
 fn resolve_list_query(args: &ListArgs, anchor: NaiveDate) -> Result<ListQuery, String> {

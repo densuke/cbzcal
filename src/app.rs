@@ -1,10 +1,12 @@
+use std::process::Command as ProcessCommand;
+
 use anyhow::{Result, bail};
 use chrono::{Datelike, Timelike};
 use serde::Serialize;
 
 use crate::{
-    backend::{CybozuHtmlBackend, ListQuery, build_backend},
-    cli::{Cli, Command, EventsCommand},
+    backend::{ApplyScope, CybozuHtmlBackend, ListQuery, build_backend},
+    cli::{ApplyScopeArg, Cli, Command, EventsCommand},
     config::AppConfig,
     model::CalendarEvent,
 };
@@ -57,8 +59,24 @@ pub fn execute(cli: Cli) -> Result<String> {
                 }
                 EventsCommand::Update(args) => {
                     let patch = args.patch()?;
-                    let event = backend.update_event(&args.id, patch)?;
-                    render_event_result("更新しました", backend.name(), &event, args.json)
+                    let scope = args.scope.map(into_apply_scope);
+                    if patch.is_empty() && !args.web {
+                        bail!(
+                            "更新対象がありません。少なくとも 1 つの変更オプションを指定するか `--web` を付けてください"
+                        );
+                    }
+                    if patch.is_empty() {
+                        let url = backend.event_web_url(&args.id)?;
+                        open_in_browser(&url)?;
+                        Ok(format!("ブラウザで開きました\n  {url}"))
+                    } else {
+                        let event = backend.update_event(&args.id, patch, scope)?;
+                        if args.web {
+                            let url = backend.event_web_url(&event.id)?;
+                            open_in_browser(&url)?;
+                        }
+                        render_event_result("更新しました", backend.name(), &event, args.json)
+                    }
                 }
                 EventsCommand::Clone(args) => {
                     let overrides = args.overrides()?;
@@ -69,7 +87,7 @@ pub fn execute(cli: Cli) -> Result<String> {
                     if args.id.is_empty() {
                         bail!("削除対象の ID が空です");
                     }
-                    let event = backend.delete_event(&args.id)?;
+                    let event = backend.delete_event(&args.id, args.scope.map(into_apply_scope))?;
                     render_event_result("削除しました", backend.name(), &event, args.json)
                 }
             }?;
@@ -89,6 +107,51 @@ fn emit_verbose_notices(verbose: u8, notices: Vec<String>) {
     }
     for notice in notices {
         eprintln!("[verbose] {notice}");
+    }
+}
+
+fn into_apply_scope(scope: ApplyScopeArg) -> ApplyScope {
+    match scope {
+        ApplyScopeArg::This => ApplyScope::This,
+        ApplyScopeArg::After => ApplyScope::After,
+        ApplyScopeArg::All => ApplyScope::All,
+    }
+}
+
+fn open_in_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut cmd = ProcessCommand::new("open");
+        cmd.arg(url);
+        cmd
+    };
+
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut cmd = ProcessCommand::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut cmd = ProcessCommand::new("cmd");
+        cmd.args(["/C", "start", "", url]);
+        cmd
+    };
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        bail!("この OS では `--web` に未対応です");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+    {
+        let status = command.status()?;
+        if !status.success() {
+            bail!("ブラウザ起動に失敗しました: {status}");
+        }
+        Ok(())
     }
 }
 

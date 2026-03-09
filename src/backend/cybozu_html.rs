@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    backend::{CalendarBackend, ListQuery},
+    backend::{ApplyScope, CalendarBackend, ListQuery},
     config::{CredentialPair, CredentialSource, CybozuHtmlConfig},
     model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent, short_id_from_event_id},
 };
@@ -83,6 +83,12 @@ struct HtmlForm {
 struct ShortEventReference {
     seid: String,
     date: NaiveDate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModifyMode {
+    Normal,
+    Regular,
 }
 
 #[derive(Debug, Serialize)]
@@ -725,6 +731,23 @@ impl CybozuHtmlBackend {
         Ok(url.to_string())
     }
 
+    fn schedule_regular_modify_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleRegularModify");
+            query.append_pair("UID", &identity.uid);
+            query.append_pair("GID", &identity.gid);
+            query.append_pair("Date", &identity.date);
+            query.append_pair("BDate", &identity.bdate);
+            query.append_pair("sEID", &identity.seid);
+            query.append_pair("cp", "sv");
+        }
+
+        Ok(url.to_string())
+    }
+
     fn fetch_schedule_modify(
         &self,
         basic_credentials: &Option<CredentialPair>,
@@ -738,6 +761,47 @@ impl CybozuHtmlBackend {
             bail!("ScheduleModify に到達できませんでした: {}", response.url);
         }
         Ok(response)
+    }
+
+    fn fetch_schedule_modify_form(
+        &self,
+        basic_credentials: &Option<CredentialPair>,
+        identity: &ScheduleViewIdentity,
+    ) -> Result<(ModifyMode, ResponseSnapshot, HtmlForm)> {
+        let normal = self.fetch_schedule_modify(basic_credentials, identity);
+        if let Ok(response) = normal {
+            let form = parse_html_form(&response.body, &response.url, "ScheduleModify")?;
+            return Ok((ModifyMode::Normal, response, form));
+        }
+
+        let url = self.schedule_regular_modify_url(identity)?;
+        let response = self
+            .get_following_redirects(&url, basic_credentials)
+            .with_context(|| format!("ScheduleRegularModify の取得に失敗しました: {url}"))?;
+        if !is_schedule_regular_modify_page(&response.url, &response.body) {
+            bail!(
+                "ScheduleRegularModify に到達できませんでした: {}",
+                response.url
+            );
+        }
+        let form = parse_html_form(&response.body, &response.url, "ScheduleRegularModify")?;
+        Ok((ModifyMode::Regular, response, form))
+    }
+
+    fn schedule_view_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleView");
+            query.append_pair("UID", &identity.uid);
+            query.append_pair("GID", &identity.gid);
+            query.append_pair("Date", &identity.date);
+            query.append_pair("BDate", &identity.bdate);
+            query.append_pair("sEID", &identity.seid);
+            query.append_pair("CP", "sg");
+        }
+        Ok(url.to_string())
     }
 
     fn schedule_delete_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
@@ -963,20 +1027,27 @@ impl CalendarBackend for CybozuHtmlBackend {
             .ok_or_else(|| anyhow::anyhow!("登録後の予定を ScheduleIndex から特定できませんでした"))
     }
 
-    fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent> {
+    fn update_event(
+        &mut self,
+        id: &str,
+        patch: EventPatch,
+        scope: Option<ApplyScope>,
+    ) -> Result<CalendarEvent> {
         validate_supported_update_patch(&patch)?;
 
         let (basic_credentials, identity) = self.resolve_event_identity(id)?;
-        let schedule_modify = self.fetch_schedule_modify(&basic_credentials, &identity)?;
-        let mut form = parse_html_form(
-            &schedule_modify.body,
-            &schedule_modify.url,
-            "ScheduleModify",
-        )?;
+        let (mode, schedule_modify, mut form) =
+            self.fetch_schedule_modify_form(&basic_credentials, &identity)?;
         let current_event = parse_schedule_modify_event(&form.fields, &identity)?;
         let updated_event = current_event.apply_patch(&patch)?;
         validate_supported_update_event(&updated_event)?;
-        populate_schedule_modify_form(&mut form.fields, &updated_event, &identity);
+        populate_schedule_modify_form(
+            &mut form.fields,
+            &updated_event,
+            &identity,
+            mode,
+            scope.unwrap_or(ApplyScope::This),
+        );
         let submit_response = self.post_form_following_redirects(
             &form.action_url,
             &form.fields,
@@ -1003,7 +1074,7 @@ impl CalendarBackend for CybozuHtmlBackend {
             Some(&identity.uid),
         )?;
 
-        find_event_by_seid(events, &identity.seid)
+        find_updated_event(events, &updated_event, &identity.seid)
             .map(|mut event| {
                 event.description = updated_event.description.clone();
                 event
@@ -1069,14 +1140,10 @@ impl CalendarBackend for CybozuHtmlBackend {
             .ok_or_else(|| anyhow::anyhow!("複製後の予定を ScheduleIndex から特定できませんでした"))
     }
 
-    fn delete_event(&mut self, _id: &str) -> Result<CalendarEvent> {
+    fn delete_event(&mut self, _id: &str, scope: Option<ApplyScope>) -> Result<CalendarEvent> {
         let (basic_credentials, identity) = self.resolve_event_identity(_id)?;
-        let schedule_modify = self.fetch_schedule_modify(&basic_credentials, &identity)?;
-        let schedule_modify_form = parse_html_form(
-            &schedule_modify.body,
-            &schedule_modify.url,
-            "ScheduleModify",
-        )?;
+        let (_, _schedule_modify, schedule_modify_form) =
+            self.fetch_schedule_modify_form(&basic_credentials, &identity)?;
         let deleted_event = parse_schedule_modify_event(&schedule_modify_form.fields, &identity)?;
         let schedule_delete = self.fetch_schedule_delete(&basic_credentials, &identity)?;
         let mut form = parse_html_form(
@@ -1084,8 +1151,12 @@ impl CalendarBackend for CybozuHtmlBackend {
             &schedule_delete.url,
             "ScheduleDelete",
         )?;
-        validate_supported_delete_form(&form.fields)?;
-        populate_schedule_delete_form(&mut form.fields, &identity);
+        validate_supported_delete_form(&form.fields, scope)?;
+        populate_schedule_delete_form(
+            &mut form.fields,
+            &identity,
+            scope.unwrap_or(ApplyScope::This),
+        );
         let submit_response = self.post_form_following_redirects(
             &form.action_url,
             &form.fields,
@@ -1109,14 +1180,22 @@ impl CalendarBackend for CybozuHtmlBackend {
             Some(&identity.uid),
         )?;
 
-        if find_event_by_seid(events, &identity.seid).is_some() {
-            bail!(
-                "削除後も対象予定が ScheduleIndex に残っています: {}",
-                identity.seid
-            );
+        if find_event_by_seid(events.clone(), &identity.seid).is_some() {
+            let short_id = short_id_from_event_id(&composite_event_id(&identity));
+            if find_event_by_short_id(events, &short_id).is_some() {
+                bail!(
+                    "削除後も対象予定が ScheduleIndex に残っています: {}",
+                    identity.seid
+                );
+            }
         }
 
         Ok(deleted_event)
+    }
+
+    fn event_web_url(&mut self, id: &str) -> Result<String> {
+        let (_, identity) = self.resolve_event_identity(id)?;
+        self.schedule_view_url(&identity)
     }
 }
 
@@ -1186,6 +1265,10 @@ fn is_schedule_entry_page(url: &str, body: &str) -> bool {
 
 fn is_schedule_modify_page(url: &str, body: &str) -> bool {
     url.contains("ScheduleModify") && body.contains("name=\"ScheduleModify\"")
+}
+
+fn is_schedule_regular_modify_page(url: &str, body: &str) -> bool {
+    url.contains("ScheduleRegularModify") && body.contains("name=\"ScheduleRegularModify\"")
 }
 
 fn is_schedule_delete_page(url: &str, body: &str) -> bool {
@@ -1352,16 +1435,24 @@ fn validate_supported_update_patch(patch: &EventPatch) -> Result<()> {
     Ok(())
 }
 
-fn validate_supported_delete_form(fields: &[(String, String)]) -> Result<()> {
-    if form_value(fields, "Apply").is_some() {
-        bail!("現時点の `events delete` は繰り返し予定に未対応です");
-    }
+fn validate_supported_delete_form(
+    fields: &[(String, String)],
+    requested_scope: Option<ApplyScope>,
+) -> Result<()> {
     match form_value(fields, "Member") {
-        Some("all") => Ok(()),
+        Some("all") => {}
         Some("single") => bail!("現時点の `events delete` は参加者単位の削除に未対応です"),
         Some(value) => bail!("現時点の `events delete` は未対応の削除種別です: {value}"),
         None => bail!("削除フォームの Member が見つかりません"),
     }
+
+    if form_value(fields, "Apply").is_none() {
+        if matches!(requested_scope, Some(ApplyScope::After | ApplyScope::All)) {
+            bail!("通常予定では `--scope after|all` を使えません");
+        }
+    }
+
+    Ok(())
 }
 
 impl CybozuHtmlBackend {
@@ -1712,6 +1803,8 @@ fn populate_schedule_modify_form(
     fields: &mut Vec<(String, String)>,
     event: &CalendarEvent,
     identity: &ScheduleViewIdentity,
+    mode: ModifyMode,
+    scope: ApplyScope,
 ) {
     let starts_at = event.starts_at.with_timezone(&jst_offset());
     let ends_at = event.ends_at.with_timezone(&jst_offset());
@@ -1726,7 +1819,19 @@ fn populate_schedule_modify_form(
             .checked_add_days(Days::new(1))
             .is_some_and(|next_day| next_day == ends_at.date_naive());
 
-    set_form_value(fields, "page", "ScheduleModify");
+    match mode {
+        ModifyMode::Normal => {
+            set_form_value(fields, "page", "ScheduleModify");
+        }
+        ModifyMode::Regular => {
+            set_form_value(fields, "page", "ScheduleRegularModify");
+            set_form_value(fields, "RP", "1");
+            set_form_value(fields, "Apply", apply_scope_value(scope));
+            set_form_value(fields, "ApplyDate.Year", starts_at.year().to_string());
+            set_form_value(fields, "ApplyDate.Month", starts_at.month().to_string());
+            set_form_value(fields, "ApplyDate.Day", starts_at.day().to_string());
+        }
+    }
     set_form_value(fields, "sEID", identity.seid.clone());
     set_form_value(fields, "UID", identity.uid.clone());
     set_form_value(fields, "GID", identity.gid.clone());
@@ -1770,6 +1875,7 @@ fn format_end_hour(ends_at: DateTime<FixedOffset>, is_all_day: bool) -> String {
 fn populate_schedule_delete_form(
     fields: &mut Vec<(String, String)>,
     identity: &ScheduleViewIdentity,
+    scope: ApplyScope,
 ) {
     set_form_value(fields, "page", "ScheduleDelete");
     set_form_value(fields, "sEID", identity.seid.clone());
@@ -1778,7 +1884,19 @@ fn populate_schedule_delete_form(
     set_form_value(fields, "Date", identity.date.clone());
     set_form_value(fields, "BDate", identity.bdate.clone());
     set_form_value(fields, "Member", "all");
+    if form_value(fields, "Apply").is_some() {
+        set_form_value(fields, "RP", "1");
+        set_form_value(fields, "Apply", apply_scope_value(scope));
+    }
     set_form_value(fields, "Yes", "削除する");
+}
+
+fn apply_scope_value(scope: ApplyScope) -> &'static str {
+    match scope {
+        ApplyScope::This => "this",
+        ApplyScope::After => "after",
+        ApplyScope::All => "all",
+    }
 }
 
 fn find_created_event(events: Vec<CalendarEvent>, input: &NewEvent) -> Option<CalendarEvent> {
@@ -1809,6 +1927,20 @@ fn find_event_by_short_id(events: Vec<CalendarEvent>, short_id: &str) -> Option<
     events
         .into_iter()
         .find(|event| short_id_from_event_id(&event.id) == short_id)
+}
+
+fn find_updated_event(
+    events: Vec<CalendarEvent>,
+    updated_event: &CalendarEvent,
+    seid: &str,
+) -> Option<CalendarEvent> {
+    find_event_by_seid(events.clone(), seid).or_else(|| {
+        events.into_iter().find(|event| {
+            event.title == updated_event.title
+                && event.starts_at == updated_event.starts_at
+                && event.ends_at == updated_event.ends_at
+        })
+    })
 }
 
 fn extract_numeric_seid(id: &str) -> Option<u64> {
@@ -2599,7 +2731,13 @@ mod tests {
             seid: "3096804".to_string(),
         };
 
-        populate_schedule_modify_form(&mut fields, &event, &identity);
+        populate_schedule_modify_form(
+            &mut fields,
+            &event,
+            &identity,
+            ModifyMode::Normal,
+            ApplyScope::This,
+        );
 
         assert!(fields.contains(&(String::from("Date"), String::from("da.2099.1.8"))));
         assert!(fields.contains(&(String::from("BDate"), String::from("da.2099.1.5"))));
@@ -2615,13 +2753,13 @@ mod tests {
     #[test]
     fn validates_simple_delete_form() {
         let fields = vec![("Member".to_string(), "all".to_string())];
-        validate_supported_delete_form(&fields).expect("simple delete should be supported");
+        validate_supported_delete_form(&fields, None).expect("simple delete should be supported");
     }
 
     #[test]
     fn rejects_delete_form_for_single_member_leave() {
         let fields = vec![("Member".to_string(), "single".to_string())];
-        let error = validate_supported_delete_form(&fields).expect_err("should reject");
+        let error = validate_supported_delete_form(&fields, None).expect_err("should reject");
         assert!(error.to_string().contains("参加者単位"));
     }
 
@@ -2644,11 +2782,90 @@ mod tests {
             seid: "3096804".to_string(),
         };
 
-        populate_schedule_delete_form(&mut fields, &identity);
+        populate_schedule_delete_form(&mut fields, &identity, ApplyScope::This);
 
         assert!(fields.contains(&(String::from("page"), String::from("ScheduleDelete"))));
         assert!(fields.contains(&(String::from("sEID"), String::from("3096804"))));
         assert!(fields.contains(&(String::from("Member"), String::from("all"))));
         assert!(fields.contains(&(String::from("Yes"), String::from("削除する"))));
+    }
+
+    #[test]
+    fn populates_regular_schedule_modify_form_scope() {
+        let mut fields = vec![
+            ("page".to_string(), "ScheduleRegularModify".to_string()),
+            ("Apply".to_string(), "all".to_string()),
+            ("ApplyDate.Year".to_string(), "2026".to_string()),
+            ("ApplyDate.Month".to_string(), "3".to_string()),
+            ("ApplyDate.Day".to_string(), "9".to_string()),
+            ("RP".to_string(), "1".to_string()),
+            ("SetDate.Year".to_string(), "2026".to_string()),
+            ("SetDate.Month".to_string(), "3".to_string()),
+            ("SetDate.Day".to_string(), "9".to_string()),
+            ("SetTime.Hour".to_string(), "9".to_string()),
+            ("SetTime.Minute".to_string(), "00".to_string()),
+            ("EndTime.Hour".to_string(), "10".to_string()),
+            ("EndTime.Minute".to_string(), "00".to_string()),
+            ("Detail".to_string(), "old".to_string()),
+            ("Memo".to_string(), "old memo".to_string()),
+        ];
+        let event = CalendarEvent {
+            id: "sEID=2570212&UID=379&GID=183&Date=da.2026.3.9&BDate=da.2026.3.9".to_string(),
+            title: "撤退".to_string(),
+            description: Some("updated memo".to_string()),
+            starts_at: DateTime::parse_from_rfc3339("2026-03-09T13:30:00+09:00")
+                .expect("timestamp"),
+            ends_at: DateTime::parse_from_rfc3339("2026-03-09T14:30:00+09:00").expect("timestamp"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            version: 2,
+        };
+        let identity = ScheduleViewIdentity {
+            uid: "379".to_string(),
+            gid: "183".to_string(),
+            date: "da.2026.3.9".to_string(),
+            bdate: "da.2026.3.9".to_string(),
+            seid: "2570212".to_string(),
+        };
+
+        populate_schedule_modify_form(
+            &mut fields,
+            &event,
+            &identity,
+            ModifyMode::Regular,
+            ApplyScope::After,
+        );
+
+        assert!(fields.contains(&(String::from("page"), String::from("ScheduleRegularModify"))));
+        assert!(fields.contains(&(String::from("RP"), String::from("1"))));
+        assert!(fields.contains(&(String::from("Apply"), String::from("after"))));
+    }
+
+    #[test]
+    fn populates_regular_schedule_delete_form_scope() {
+        let mut fields = vec![
+            ("page".to_string(), "ScheduleDelete".to_string()),
+            ("sEID".to_string(), "2570212".to_string()),
+            ("Date".to_string(), "da.2026.3.9".to_string()),
+            ("BDate".to_string(), "da.2026.3.9".to_string()),
+            ("UID".to_string(), "379".to_string()),
+            ("GID".to_string(), "183".to_string()),
+            ("Member".to_string(), "all".to_string()),
+            ("RP".to_string(), "1".to_string()),
+            ("Apply".to_string(), "all".to_string()),
+        ];
+        let identity = ScheduleViewIdentity {
+            uid: "379".to_string(),
+            gid: "183".to_string(),
+            date: "da.2026.3.9".to_string(),
+            bdate: "da.2026.3.9".to_string(),
+            seid: "2570212".to_string(),
+        };
+
+        populate_schedule_delete_form(&mut fields, &identity, ApplyScope::After);
+
+        assert!(fields.contains(&(String::from("RP"), String::from("1"))));
+        assert!(fields.contains(&(String::from("Apply"), String::from("after"))));
     }
 }

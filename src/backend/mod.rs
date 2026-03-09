@@ -1,7 +1,7 @@
 pub mod cybozu_html;
 pub mod fixture;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, Days, FixedOffset, TimeZone, Utc};
 
 use crate::{
@@ -16,6 +16,13 @@ pub use fixture::FixtureBackend;
 pub struct ListQuery {
     pub from: Option<DateTime<FixedOffset>>,
     pub to: Option<DateTime<FixedOffset>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyScope {
+    This,
+    After,
+    All,
 }
 
 impl ListQuery {
@@ -63,9 +70,17 @@ pub trait CalendarBackend {
     fn name(&self) -> &'static str;
     fn list_events(&mut self, query: ListQuery) -> Result<Vec<CalendarEvent>>;
     fn add_event(&mut self, input: NewEvent) -> Result<CalendarEvent>;
-    fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent>;
+    fn update_event(
+        &mut self,
+        id: &str,
+        patch: EventPatch,
+        scope: Option<ApplyScope>,
+    ) -> Result<CalendarEvent>;
     fn clone_event(&mut self, id: &str, overrides: CloneOverrides) -> Result<CalendarEvent>;
-    fn delete_event(&mut self, id: &str) -> Result<CalendarEvent>;
+    fn delete_event(&mut self, id: &str, scope: Option<ApplyScope>) -> Result<CalendarEvent>;
+    fn event_web_url(&mut self, _id: &str) -> Result<String> {
+        bail!("このバックエンドは `--web` に未対応です")
+    }
     fn drain_notices(&mut self) -> Vec<String> {
         Vec::new()
     }

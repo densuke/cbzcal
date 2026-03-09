@@ -706,11 +706,15 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 更新後の title は `[cbzcal] updated probe 20260309`
 - 直後の `events list --from 2099-01-07 --for 1d` で同一 `sEID` を再取得できた
 
+2026-03-09 追記:
+
+- `ScheduleRegularModify` にフォールバックし、繰り返し予定でも `title` / `description` / `start` / `end` を更新できるようにした
+- CLI は `update --scope this|after|all` を受け付け、未指定時は `this`
+- `update --web` を付けると該当 `ScheduleView` をブラウザで開けるようにした
+
 現時点の制約:
 
-- 単日・通常予定のみ
 - `attendees`, `facility`, `calendar` の更新は未対応
-- 繰り返し予定は `ScheduleRegularModify` 系のため未対応
 - `events list` は description をまだ再抽出しないので、更新後一覧では `description` が `null` のまま
 
 ### 19. `events delete` 実装メモ
@@ -730,11 +734,14 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 2099 年に作成していた検証用予定 `sEID=3096796`, `3096804`, `3096808` を headless で削除できた
 - `events list --from 2099-01-05 --for 4d` の結果は空配列になった
 
+2026-03-09 追記:
+
+- `ScheduleDelete` の `Apply=this|after|all` を埋めることで、繰り返し予定の削除にも対応した
+- CLI は `delete --scope this|after|all` を受け付け、未指定時は `this`
+
 現時点の制約:
 
-- 通常予定の全体削除のみ
 - 複数参加者予定の `Member=single` には未対応
-- 繰り返し予定の `Apply=this|after|all` 分岐には未対応
 
 ### 20. 短縮 ID 方針
 

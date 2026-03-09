@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    backend::{CalendarBackend, ListQuery},
+    backend::{ApplyScope, CalendarBackend, ListQuery},
     model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent},
 };
 
@@ -102,7 +102,12 @@ impl CalendarBackend for FixtureBackend {
         Ok(event)
     }
 
-    fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent> {
+    fn update_event(
+        &mut self,
+        id: &str,
+        patch: EventPatch,
+        _scope: Option<ApplyScope>,
+    ) -> Result<CalendarEvent> {
         if patch.is_empty() {
             bail!("更新対象がありません");
         }
@@ -123,7 +128,7 @@ impl CalendarBackend for FixtureBackend {
         Ok(cloned)
     }
 
-    fn delete_event(&mut self, id: &str) -> Result<CalendarEvent> {
+    fn delete_event(&mut self, id: &str, _scope: Option<ApplyScope>) -> Result<CalendarEvent> {
         let index = self.event_index(id)?;
         let deleted = self.store.events.remove(index);
         self.persist()?;
@@ -175,6 +180,7 @@ mod tests {
                     description: Some(None),
                     ..EventPatch::default()
                 },
+                None,
             )
             .expect("update");
         assert_eq!(updated.title, "詳細設計レビュー");
@@ -197,7 +203,7 @@ mod tests {
         assert_eq!(cloned.starts_at, ts("2026-03-10T14:00:00+09:00"));
         assert_eq!(cloned.ends_at, ts("2026-03-10T15:00:00+09:00"));
 
-        let deleted = backend.delete_event(&created.id).expect("delete");
+        let deleted = backend.delete_event(&created.id, None).expect("delete");
         assert_eq!(deleted.id, created.id);
         let remaining = backend
             .list_events(ListQuery {

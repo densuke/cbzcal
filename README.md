@@ -136,9 +136,18 @@ cargo run -- events update \
   --start 2099-01-07T13:00:00+09:00 \
   --end 2099-01-07T14:30:00+09:00 \
   --description "更新後メモ"
+
+cargo run -- events update \
+  --id '2570212@2026-03-09' \
+  --scope this \
+  --title "今回だけ変更"
+
+cargo run -- events update \
+  --id '3092194@2026-03-09' \
+  --web
 ```
 
-`cybozu-html` の `events update` は現時点で通常予定の単日更新のみ対応です。更新できるのは `title` / `description` / `start` / `end` だけで、`--attendee`、`--facility`、`--calendar`、繰り返し予定はまだ扱えません。
+`cybozu-html` の `events update` は `title` / `description` / `start` / `end` のみ更新できます。繰り返し予定では `--scope this|after|all` を使えます。`--web` を付けると該当予定の画面をブラウザで開き、patch 指定がある場合は headless 更新後に開きます。`--attendee`、`--facility`、`--calendar` はまだ扱えません。
 
 予定を複製します。
 
@@ -156,9 +165,13 @@ cargo run -- events clone \
 ```bash
 cargo run -- events delete \
   --id '3096804@2099-01-07'
+
+cargo run -- events delete \
+  --id '2570212@2026-03-09' \
+  --scope this
 ```
 
-`cybozu-html` の `events delete` は現時点で通常予定の全体削除のみ対応です。複数参加者予定の `self` 離脱や、繰り返し予定の `this|after|all` 分岐はまだ扱えません。
+`cybozu-html` の `events delete` は通常予定に加えて、繰り返し予定では `--scope this|after|all` を使えます。複数参加者予定の `self` 離脱はまだ扱えません。
 
 明示的に別ファイルを使いたい場合は `--config /path/to/config.toml` を指定します。  
 対応形式は `.yml`、`.yaml`、`.toml` です。
