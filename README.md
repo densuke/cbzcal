@@ -9,9 +9,9 @@
 - `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list`、通常予定の `events add` / `events clone`、通常予定と繰り返し予定の `events update` / `events delete` まで実サイトで確認済みです。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - `events --prompt "..."` で自然文から `list` / `add` / `update` / `clone` / `delete` の引数生成を試せます。既定では必ず確認し、`--yes` は `list` / `add` / `clone` のみ省略可能です。
-- `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は `XDG_STATE_HOME/cbzcal/session-cookies.json`、未設定時は `~/.local/state/cbzcal/session-cookies.json` です。
+- `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は Unix 系では `XDG_STATE_HOME/cbzcal/session-cookies.json` (未設定時は `~/.local/state/cbzcal/session-cookies.json`)、Windows では `~/.cbzcal/session-cookies.json` です。
 - 予定データもローカルにキャッシュします。リクエストされた期間がすでに取得済みの期間内（サブレンジ）であれば、通信を行わずにキャッシュから返します。
-- 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
+- 設定ファイルは `.cbzcal.toml` を標準とします。探索順は Unix 系では `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml`、Windows では `カレントディレクトリ -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
 - Unix 系では、設定ファイルの権限が `0400` または `0600` でないと起動しません。
 - 認証情報は環境変数参照が標準ですが、一時検証用に設定ファイルへ直接書く fallback も使えます。
