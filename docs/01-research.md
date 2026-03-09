@@ -618,6 +618,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 現在の抽出方式:
 
 - `ScheduleIndex` の `div.dragTarget[data-cb-eid]` を 1 予定として扱う
+- ただし、現在はページ上部の `予定を登録する` リンクから現在ユーザーの `UID` を取り、そのユーザー行だけを対象にする
 - 詳細リンク `a.event[href*="page=ScheduleView"]` から `sEID`, `UID`, `GID`, `Date`, `BDate` を取る
 - 開始終了は `data-cb-st`, `data-cb-et` を読む
 - `data-cb-st` / `data-cb-et` には少なくとも次の形式がある
@@ -629,6 +630,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 現時点の制約:
 
 - `description`, `attendees`, `facility` はまだ取っていない
+- 「自分が参加者に含まれる共有予定」まではまだ広げておらず、現状は自分の `UID` 行に出ている予定だけ
 - 非公開予定のうち詳細リンクがないものは一覧に出ない
 - `id` は将来の更新/削除で必要な画面文脈を残すため、`sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合形式にしている
 - `calendar` は現在の HTML から安定して取れていないため `null` になる場合がある

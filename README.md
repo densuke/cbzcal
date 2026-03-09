@@ -67,7 +67,7 @@ cargo run -- events list \
 ```
 
 `cybozu-html` では現時点で `description` / `attendees` / `facility` は未抽出です。  
-また、グループ週表示では共有予定が参加者ごとに重複して見えるため、CLI では `sEID + Date + BDate` 単位で 1 件に畳んでいます。
+また、グループ週表示では共有予定が参加者ごとに重複して見えるため、CLI では `sEID + Date + BDate` 単位で 1 件に畳み、さらに現在ユーザーの `UID` 行だけを取得対象にしています。
 
 予定を追加します。
 

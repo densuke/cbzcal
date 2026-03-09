@@ -621,10 +621,12 @@ impl CalendarBackend for CybozuHtmlBackend {
 
         for page in pages {
             let calendar_name = extract_calendar_name(&page.body);
+            let current_user_uid = extract_current_user_uid(&page.body, &page.url);
             events.extend(parse_schedule_index_events(
                 &page.body,
                 &page.url,
                 calendar_name.as_deref(),
+                current_user_uid.as_deref(),
             )?);
         }
 
@@ -763,6 +765,7 @@ fn parse_schedule_index_events(
     html: &str,
     page_url: &str,
     calendar_name: Option<&str>,
+    current_user_uid: Option<&str>,
 ) -> Result<Vec<CalendarEvent>> {
     let document = Html::parse_document(html);
     let container_selector =
@@ -781,6 +784,11 @@ fn parse_schedule_index_events(
             .attr("href")
             .ok_or_else(|| anyhow::anyhow!("ScheduleView リンクの href がありません"))?;
         let identity = parse_schedule_view_identity(page_url, href)?;
+        if let Some(current_user_uid) = current_user_uid
+            && identity.uid != current_user_uid
+        {
+            continue;
+        }
         let anchor_date = container
             .value()
             .attr("data-cb-date")
@@ -949,6 +957,27 @@ fn extract_calendar_name(html: &str) -> Option<String> {
     let option = document.select(&selector).next()?;
     let label = normalize_whitespace(&option.text().collect::<String>());
     (!label.is_empty()).then_some(label)
+}
+
+fn extract_current_user_uid(html: &str, page_url: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    let selector =
+        Selector::parse("a[href*=\"page=ScheduleEntry\"][href*=\"UID=\"]").expect("valid selector");
+
+    for link in document.select(&selector) {
+        let label = normalize_whitespace(&link.text().collect::<String>());
+        if label != "予定を登録する" {
+            continue;
+        }
+
+        let href = link.value().attr("href")?;
+        let absolute = Url::parse(page_url).ok()?.join(href).ok()?;
+        if let Some(uid) = extract_query_parameter(absolute.as_str(), "UID") {
+            return Some(uid);
+        }
+    }
+
+    None
 }
 
 fn normalize_whitespace(value: &str) -> String {
@@ -1141,6 +1170,7 @@ mod tests {
             html,
             "https://example.cybozu.com/o/ag.cgi?page=ScheduleIndex",
             extract_calendar_name(html).as_deref(),
+            Some("379"),
         )
         .expect("events");
 
@@ -1192,6 +1222,27 @@ mod tests {
                 "sEID=3048561&UID=379&GID=183&Date=da.2026.3.10&BDate=da.2026.3.9"
             ),
             "sEID=3048561&Date=da.2026.3.10&BDate=da.2026.3.9"
+        );
+    }
+
+    #[test]
+    fn extracts_current_user_uid_from_primary_schedule_entry_link() {
+        let html = r#"
+<html>
+  <body>
+    <a href="ag.cgi?page=ScheduleEntry&amp;UID=379&amp;GID=183&amp;Date=da.2026.3.9&amp;BDate=da.2026.3.9&amp;cp=sg">予定を登録する</a>
+    <a href="ag.cgi?page=ScheduleEntry&amp;UID=999&amp;GID=183&amp;Date=da.2026.3.9&amp;BDate=da.2026.3.9&amp;CP=sg"><img alt="予定の登録"></a>
+  </body>
+</html>
+"#;
+
+        assert_eq!(
+            extract_current_user_uid(
+                html,
+                "https://example.cybozu.com/o/ag.cgi?page=ScheduleIndex"
+            )
+            .as_deref(),
+            Some("379")
         );
     }
 }
