@@ -39,10 +39,16 @@ pub struct Cli {
 pub enum Command {
     Doctor,
     ProbeLogin,
-    Events {
-        #[command(subcommand)]
-        command: EventsCommand,
-    },
+    Events(EventsArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct EventsArgs {
+    #[command(subcommand)]
+    pub command: Option<EventsCommand>,
+    #[command(flatten)]
+    pub list: ListArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -703,5 +709,15 @@ mod tests {
     fn parses_global_verbose_count() {
         let cli = Cli::try_parse_from(["cbzcal", "-vv", "events", "list"]).expect("parse");
         assert_eq!(cli.verbose, 2);
+    }
+
+    #[test]
+    fn events_without_subcommand_default_to_list_args() {
+        let cli = Cli::try_parse_from(["cbzcal", "events", "--date", "today"]).expect("parse");
+        let Command::Events(events) = cli.command else {
+            panic!("events command");
+        };
+        assert!(events.command.is_none());
+        assert_eq!(events.list.date.as_deref(), Some("today"));
     }
 }

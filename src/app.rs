@@ -38,9 +38,9 @@ pub fn execute(cli: Cli) -> Result<String> {
                 .ok_or_else(|| anyhow::anyhow!("[cybozu-html] セクションがありません"))?;
             render_json(&CybozuHtmlBackend::probe_login(cybozu)?)
         }
-        Command::Events { command } => {
+        Command::Events(events) => {
             let mut backend = build_backend(&loaded.config)?;
-            let output = match command {
+            let output = match events.command.unwrap_or(EventsCommand::List(events.list)) {
                 EventsCommand::List(args) => {
                     let query: ListQuery = args.query()?;
                     let events = backend.list_events(query.with_default_window())?;
