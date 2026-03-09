@@ -522,6 +522,7 @@ session_cache_path = "../state/cookies.json"
                 office_password: None,
                 user_agent: None,
             }),
+            events_cache_path: None,
             ollama: None,
         };
 
@@ -649,6 +650,7 @@ fixture:
                 office_password: Some("office-pass".to_string()),
                 user_agent: None,
             }),
+            events_cache_path: None,
             ollama: None,
         };
 
