@@ -5,6 +5,7 @@ use crate::{
     backend::{CybozuHtmlBackend, ListQuery, build_backend},
     cli::{Cli, Command, EventsCommand},
     config::AppConfig,
+    model::CalendarEvent,
 };
 
 #[derive(Debug, Serialize)]
@@ -17,6 +18,13 @@ struct DeleteResult<'a> {
 struct EventEnvelope<T: Serialize> {
     backend: &'static str,
     data: T,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiEvent<'a> {
+    short_id: String,
+    #[serde(flatten)]
+    event: &'a CalendarEvent,
 }
 
 pub fn execute(cli: Cli) -> Result<String> {
@@ -40,14 +48,14 @@ pub fn execute(cli: Cli) -> Result<String> {
                     let events = backend.list_events(query.with_default_window())?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
-                        data: events,
+                        data: render_events(&events),
                     })
                 }
                 EventsCommand::Add(args) => {
                     let event = backend.add_event(args.new_event()?)?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
-                        data: event,
+                        data: render_event(&event),
                     })
                 }
                 EventsCommand::Update(args) => {
@@ -55,7 +63,7 @@ pub fn execute(cli: Cli) -> Result<String> {
                     let event = backend.update_event(&args.id, patch)?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
-                        data: event,
+                        data: render_event(&event),
                     })
                 }
                 EventsCommand::Clone(args) => {
@@ -63,7 +71,7 @@ pub fn execute(cli: Cli) -> Result<String> {
                     let event = backend.clone_event(&args.id, overrides)?;
                     render_json(&EventEnvelope {
                         backend: backend.name(),
-                        data: event,
+                        data: render_event(&event),
                     })
                 }
                 EventsCommand::Delete(args) => {
@@ -86,4 +94,15 @@ pub fn execute(cli: Cli) -> Result<String> {
 
 fn render_json<T: Serialize>(value: &T) -> Result<String> {
     Ok(serde_json::to_string_pretty(value)?)
+}
+
+fn render_event(event: &CalendarEvent) -> ApiEvent<'_> {
+    ApiEvent {
+        short_id: event.short_id(),
+        event,
+    }
+}
+
+fn render_events(events: &[CalendarEvent]) -> Vec<ApiEvent<'_>> {
+    events.iter().map(render_event).collect()
 }
