@@ -76,6 +76,16 @@ impl CachingBackend {
         fs::write(&self.cache_path, content)
             .with_context(|| format!("キャッシュを保存できません: {}", self.cache_path.display()))?;
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = fs::metadata(&self.cache_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600);
+                let _ = fs::set_permissions(&self.cache_path, perms);
+            }
+        }
+
         Ok(())
     }
 
