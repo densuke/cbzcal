@@ -43,6 +43,11 @@ pub enum Command {
     ProbeLogin,
     #[allow(clippy::large_enum_variant)]
     Events(EventsArgs),
+    #[command(about = "シェル補完コードを出力する")]
+    Shell {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Debug, Args)]

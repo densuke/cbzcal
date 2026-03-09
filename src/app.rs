@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use anyhow::{Result, bail};
 use chrono::{Datelike, FixedOffset, TimeZone};
 
+use clap::CommandFactory;
 use crate::{
     backend::{
         CalendarBackend, CybozuHtmlBackend, ListQuery, build_backend,
@@ -64,6 +65,11 @@ pub fn execute(cli: Cli) -> Result<String> {
             };
             emit_verbose_notices(verbose, backend.drain_notices());
             Ok(output)
+        }
+        Command::Shell { shell } => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "cbzcal", &mut io::stdout());
+            Ok("".to_string())
         }
     }
 }
