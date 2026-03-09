@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, FixedOffset, NaiveDate, Timelike};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
@@ -157,6 +157,7 @@ fn build_system_prompt(user_prompt: &str, anchor: NaiveDate) -> String {
             "Use these keys when needed: action, id, title, title_suffix, date, from, to, at, until, for, all_day, description, clear_description, start, end, scope, web, preserve_time.\n",
             "Rules:\n",
             "- Prefer short friendly values like today, tomorrow, 2026-03-10, 15:00, 1h.\n",
+            "- If you use start/end, include timezone like +09:00.\n",
             "- For '同じ時間' or '同時間', set preserve_time=true and set the target date.\n",
             "- For all-day events, set all_day=true and omit at/until/for/start/end.\n",
             "- For update/delete/clone, always include id.\n",
@@ -188,7 +189,7 @@ fn build_execution(
 ) -> Result<PromptExecution> {
     match plan.action {
         PromptActionWire::List => build_list_execution(plan),
-        PromptActionWire::Add => build_add_execution(plan),
+        PromptActionWire::Add => build_add_execution(plan, anchor),
         PromptActionWire::Update => build_update_execution(plan, anchor, existing_event),
         PromptActionWire::Clone => build_clone_execution(plan, anchor),
         PromptActionWire::Delete => build_delete_execution(plan),
@@ -201,7 +202,7 @@ fn build_list_execution(plan: PromptPlan) -> Result<PromptExecution> {
         from: plan.from,
         to: plan.to,
         date: plan.date,
-        duration: plan.duration,
+        duration: plan.duration.map(|value| normalize_prompt_duration(&value)),
     };
     let mut summary = vec!["action: list".to_string()];
     if let Some(date) = &args.date {
@@ -225,20 +226,40 @@ fn build_list_execution(plan: PromptPlan) -> Result<PromptExecution> {
     })
 }
 
-fn build_add_execution(plan: PromptPlan) -> Result<PromptExecution> {
+fn build_add_execution(plan: PromptPlan, anchor: NaiveDate) -> Result<PromptExecution> {
     let title = plan
         .title
         .ok_or_else(|| anyhow::anyhow!("add には title が必要です"))?;
+    let context_date = plan.date.as_deref();
+    let start = parse_optional_timestamp(plan.start.as_deref(), anchor, context_date)?;
+    let end = parse_optional_timestamp(plan.end.as_deref(), anchor, context_date)?;
+    let uses_strict = start.is_some() || end.is_some();
     let args = AddArgs {
         json: false,
         title: title.clone(),
-        start: parse_optional_timestamp(plan.start.as_deref())?,
-        end: parse_optional_timestamp(plan.end.as_deref())?,
-        date: plan.date,
-        at: plan.at,
-        until: plan.until,
-        duration: plan.duration,
-        all_day: plan.all_day.unwrap_or(false),
+        start,
+        end,
+        date: if uses_strict { None } else { plan.date },
+        at: if uses_strict {
+            None
+        } else {
+            plan.at.map(|value| normalize_prompt_time(&value))
+        },
+        until: if uses_strict {
+            None
+        } else {
+            plan.until.map(|value| normalize_prompt_time(&value))
+        },
+        duration: if uses_strict {
+            None
+        } else {
+            plan.duration.map(|value| normalize_prompt_duration(&value))
+        },
+        all_day: if uses_strict {
+            false
+        } else {
+            plan.all_day.unwrap_or(false)
+        },
         description: plan.description,
         attendees: Vec::new(),
         facility: None,
@@ -256,6 +277,12 @@ fn build_add_execution(plan: PromptPlan) -> Result<PromptExecution> {
     }
     if let Some(duration) = &args.duration {
         summary.push(format!("for: {duration}"));
+    }
+    if let Some(start) = &args.start {
+        summary.push(format!("start: {}", start.to_rfc3339()));
+    }
+    if let Some(end) = &args.end {
+        summary.push(format!("end: {}", end.to_rfc3339()));
     }
     if args.all_day {
         summary.push("all_day: true".to_string());
@@ -385,9 +412,10 @@ fn resolve_update_times(
     existing_event: Option<&CalendarEvent>,
 ) -> Result<(Option<DateTime<FixedOffset>>, Option<DateTime<FixedOffset>>)> {
     if plan.start.is_some() || plan.end.is_some() {
+        let context_date = plan.date.as_deref();
         return Ok((
-            parse_optional_timestamp(plan.start.as_deref())?,
-            parse_optional_timestamp(plan.end.as_deref())?,
+            parse_optional_timestamp(plan.start.as_deref(), anchor, context_date)?,
+            parse_optional_timestamp(plan.end.as_deref(), anchor, context_date)?,
         ));
     }
 
@@ -422,9 +450,10 @@ fn resolve_target_window(
     anchor: NaiveDate,
 ) -> Result<(Option<DateTime<FixedOffset>>, Option<DateTime<FixedOffset>>)> {
     if plan.start.is_some() || plan.end.is_some() {
+        let context_date = plan.date.as_deref();
         return Ok((
-            parse_optional_timestamp(plan.start.as_deref())?,
-            parse_optional_timestamp(plan.end.as_deref())?,
+            parse_optional_timestamp(plan.start.as_deref(), anchor, context_date)?,
+            parse_optional_timestamp(plan.end.as_deref(), anchor, context_date)?,
         ));
     }
 
@@ -443,23 +472,134 @@ fn resolve_target_window(
         .at
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("date を使う場合は at も必要です"))?;
-    let (start_hour, start_minute) = parse_time_of_day(at).map_err(anyhow::Error::msg)?;
+    let (start_hour, start_minute) = parse_prompt_time_of_day(at)?;
     let start = to_jst_datetime(date, start_hour, start_minute).map_err(anyhow::Error::msg)?;
     let end = if let Some(until) = &plan.until {
-        let (end_hour, end_minute) = parse_time_of_day(until).map_err(anyhow::Error::msg)?;
+        let (end_hour, end_minute) = parse_prompt_time_of_day(until)?;
         to_jst_datetime(date, end_hour, end_minute).map_err(anyhow::Error::msg)?
     } else if let Some(duration) = &plan.duration {
-        start + parse_duration(duration).map_err(anyhow::Error::msg)?
+        start + parse_duration(&normalize_prompt_duration(duration)).map_err(anyhow::Error::msg)?
     } else {
         bail!("date と at を使う場合は until か for も必要です");
     };
     Ok((Some(start), Some(end)))
 }
 
-fn parse_optional_timestamp(input: Option<&str>) -> Result<Option<DateTime<FixedOffset>>> {
+fn parse_optional_timestamp(
+    input: Option<&str>,
+    anchor: NaiveDate,
+    context_date: Option<&str>,
+) -> Result<Option<DateTime<FixedOffset>>> {
     input
-        .map(|value| parse_timestamp(value).map_err(anyhow::Error::msg))
+        .map(|value| parse_prompt_timestamp(value, anchor, context_date))
         .transpose()
+}
+
+fn parse_prompt_timestamp(
+    input: &str,
+    anchor: NaiveDate,
+    context_date: Option<&str>,
+) -> Result<DateTime<FixedOffset>> {
+    if let Ok(timestamp) = parse_timestamp(input) {
+        return Ok(timestamp);
+    }
+
+    let normalized = normalize_prompt_datetime(input);
+    for format in [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+    ] {
+        if let Ok(naive) = NaiveDateTime::parse_from_str(&normalized, format) {
+            return jst_from_naive(naive);
+        }
+    }
+
+    if let Ok(date) = parse_flexible_date(&normalized, anchor) {
+        return to_jst_datetime(date, 0, 0).map_err(anyhow::Error::msg);
+    }
+
+    if let Some(context_date) = context_date {
+        let date = parse_flexible_date(context_date, anchor).map_err(anyhow::Error::msg)?;
+        let (hour, minute) = parse_prompt_time_of_day(&normalized)?;
+        return to_jst_datetime(date, hour, minute).map_err(anyhow::Error::msg);
+    }
+
+    bail!(
+        "日時を解釈できませんでした: {input}. RFC3339 に加えて `2026-03-10 17:30` や `17:30` + `date` を受け付けます"
+    )
+}
+
+fn parse_prompt_time_of_day(input: &str) -> Result<(u32, u32)> {
+    let normalized = normalize_prompt_time(input);
+    parse_time_of_day(&normalized).map_err(anyhow::Error::msg)
+}
+
+fn normalize_prompt_datetime(input: &str) -> String {
+    normalize_prompt_time(input.trim()).replace('　', " ")
+}
+
+fn normalize_prompt_time(input: &str) -> String {
+    let mut normalized = input.trim().replace("時半", ":30");
+    normalized = normalized.replace("時", ":");
+    normalized = normalized.replace("分", "");
+    normalized = normalized.replace('：', ":");
+    if let Some(stripped) = normalized
+        .strip_suffix('z')
+        .or_else(|| normalized.strip_suffix('Z'))
+    {
+        normalized = stripped.to_string();
+    }
+    normalized = strip_trailing_timezone_offset(&normalized).to_string();
+    let parts = normalized.split(':').collect::<Vec<_>>();
+    if parts.len() >= 3 {
+        normalized = format!("{}:{}", parts[0], parts[1]);
+    }
+    if normalized.ends_with(':') {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn strip_trailing_timezone_offset(input: &str) -> &str {
+    if input.len() < 6 {
+        return input;
+    }
+    let suffix = &input[input.len() - 6..];
+    let bytes = suffix.as_bytes();
+    let is_offset = matches!(bytes[0], b'+' | b'-')
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit()
+        && bytes[3] == b':'
+        && bytes[4].is_ascii_digit()
+        && bytes[5].is_ascii_digit();
+    if is_offset {
+        &input[..input.len() - 6]
+    } else {
+        input
+    }
+}
+
+fn normalize_prompt_duration(input: &str) -> String {
+    input
+        .trim()
+        .replace("時間", "h")
+        .replace("時", "h")
+        .replace("分", "m")
+        .replace("日", "d")
+        .replace('＋', "+")
+        .replace('　', "")
+}
+
+fn jst_from_naive(naive: NaiveDateTime) -> Result<DateTime<FixedOffset>> {
+    FixedOffset::east_opt(9 * 60 * 60)
+        .expect("jst")
+        .from_local_datetime(&naive)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("日時を構築できません"))
 }
 
 fn parse_scope_arg(input: Option<&str>) -> Result<Option<ApplyScopeArg>> {
@@ -709,6 +849,67 @@ mod tests {
         assert_eq!(
             execution.shell_command,
             "cbzcal events add --title '伊藤様と打ち合わせ' --date tomorrow --at 15:00 --for 1h"
+        );
+    }
+
+    #[test]
+    fn prompt_timestamp_accepts_naive_jst_datetime() {
+        let timestamp =
+            parse_prompt_timestamp("2026-03-10 17:30", anchor(), None).expect("timestamp");
+        assert_eq!(timestamp.to_rfc3339(), "2026-03-10T17:30:00+09:00");
+    }
+
+    #[test]
+    fn prompt_timestamp_accepts_time_with_context_date() {
+        let timestamp =
+            parse_prompt_timestamp("17時半", anchor(), Some("tomorrow")).expect("timestamp");
+        assert_eq!(timestamp.to_rfc3339(), "2026-03-10T17:30:00+09:00");
+    }
+
+    #[test]
+    fn prompt_duration_normalizes_japanese_units() {
+        assert_eq!(normalize_prompt_duration("3時間30分"), "3h30m");
+    }
+
+    #[test]
+    fn prompt_time_normalizes_offset_suffix() {
+        assert_eq!(normalize_prompt_time("17:30+09:00"), "17:30");
+        assert_eq!(normalize_prompt_time("17:30:00+09:00"), "17:30");
+    }
+
+    #[test]
+    fn add_execution_prefers_strict_timestamps_over_date_fields() {
+        let plan = PromptPlan {
+            action: PromptActionWire::Add,
+            id: None,
+            title: Some("ミーティング".to_string()),
+            title_suffix: None,
+            date: Some("2026-03-10".to_string()),
+            from: None,
+            to: None,
+            at: Some("17:30".to_string()),
+            until: None,
+            duration: Some("3h".to_string()),
+            all_day: None,
+            description: None,
+            clear_description: None,
+            start: Some("2026-03-10T17:30:00+09:00".to_string()),
+            end: Some("2026-03-10T20:30:00+09:00".to_string()),
+            scope: None,
+            web: None,
+            preserve_time: None,
+        };
+
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        let EventsCommand::Add(args) = execution.command else {
+            panic!("add");
+        };
+        assert!(args.date.is_none());
+        assert!(args.at.is_none());
+        assert!(args.duration.is_none());
+        assert_eq!(
+            execution.shell_command,
+            "cbzcal events add --title 'ミーティング' --start '2026-03-10T17:30:00+09:00' --end '2026-03-10T20:30:00+09:00'"
         );
     }
 }
