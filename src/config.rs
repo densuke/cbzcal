@@ -83,6 +83,13 @@ impl AppConfig {
         {
             fixture.path = normalize_path(&base_dir.join(&fixture.path));
         }
+
+        if let Some(cybozu) = &mut self.cybozu_html
+            && let Some(path) = &cybozu.session_cache_path
+            && !path.is_absolute()
+        {
+            cybozu.session_cache_path = Some(normalize_path(&base_dir.join(path)));
+        }
     }
 
     pub fn doctor_report(&self, config_path: &Path) -> DoctorReport {
@@ -165,6 +172,13 @@ impl AppConfig {
                     cybozu.office_login_post_url.as_deref(),
                     inferred_login_post_url.as_deref(),
                 );
+                checks.push(DoctorCheck::ok(
+                    "session-cache",
+                    format!(
+                        "セッション Cookie キャッシュを使用します: {}",
+                        cybozu.session_cache_path().display()
+                    ),
+                ));
 
                 push_env_pair_checks(
                     &mut checks,
@@ -217,6 +231,7 @@ pub struct CybozuHtmlConfig {
     pub base_url: String,
     pub office_login_url: Option<String>,
     pub office_login_post_url: Option<String>,
+    pub session_cache_path: Option<PathBuf>,
     pub basic_username_env: Option<String>,
     pub basic_password_env: Option<String>,
     pub basic_username: Option<String>,
@@ -229,6 +244,12 @@ pub struct CybozuHtmlConfig {
 }
 
 impl CybozuHtmlConfig {
+    pub fn session_cache_path(&self) -> PathBuf {
+        self.session_cache_path
+            .clone()
+            .unwrap_or_else(default_session_cache_path)
+    }
+
     pub fn resolve_basic_credentials(&self) -> Result<Option<CredentialPair>> {
         resolve_credential_pair(
             self.basic_username_env.as_deref(),
@@ -563,8 +584,22 @@ fn xdg_config_home() -> Option<PathBuf> {
         .or_else(|| home_dir().map(|home| home.join(".config")))
 }
 
+fn xdg_state_home() -> Option<PathBuf> {
+    env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
+}
+
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
+}
+
+fn default_session_cache_path() -> PathBuf {
+    xdg_state_home()
+        .or_else(home_dir)
+        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join("cbzcal")
+        .join("session-cookies.json")
 }
 
 #[cfg(unix)]
@@ -680,6 +715,66 @@ office_login_post_url = "https://example.cybozu.com/api/auth/redirect.do"
     }
 
     #[test]
+    fn cybozu_html_relative_session_cache_path_is_resolved() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let config_path = tempdir.path().join("config").join("cbzcal.toml");
+        fs::create_dir_all(config_path.parent().expect("parent")).expect("mkdir");
+        fs::write(
+            &config_path,
+            r#"
+backend = "cybozu-html"
+
+[cybozu-html]
+base_url = "https://example.cybozu.com/o/ag.cgi"
+session_cache_path = "../state/cookies.json"
+"#,
+        )
+        .expect("write config");
+        #[cfg(unix)]
+        chmod(&config_path, 0o600);
+
+        let config = AppConfig::load(&config_path).expect("load config");
+        let cybozu = config.cybozu_html.expect("cybozu-html");
+        assert_eq!(
+            cybozu.session_cache_path(),
+            tempdir.path().join("state").join("cookies.json")
+        );
+    }
+
+    #[test]
+    fn cybozu_html_default_session_cache_path_uses_xdg_state_home() {
+        let home = env::var_os("HOME");
+        let xdg_state = env::var_os("XDG_STATE_HOME");
+        let root = tempfile::tempdir().expect("tempdir");
+
+        unsafe {
+            env::set_var("HOME", root.path().join("home"));
+            env::set_var("XDG_STATE_HOME", root.path().join("state"));
+        }
+
+        let path = default_session_cache_path();
+
+        if let Some(value) = home {
+            unsafe { env::set_var("HOME", value) };
+        } else {
+            unsafe { env::remove_var("HOME") };
+        }
+        if let Some(value) = xdg_state {
+            unsafe { env::set_var("XDG_STATE_HOME", value) };
+        } else {
+            unsafe { env::remove_var("XDG_STATE_HOME") };
+        }
+
+        assert_eq!(
+            path,
+            root.path()
+                .join("state")
+                .join("cbzcal")
+                .join("session-cookies.json")
+        );
+    }
+
+    #[test]
     fn doctor_warns_when_login_endpoints_are_not_explicitly_configured() {
         let config = AppConfig {
             backend: BackendKind::CybozuHtml,
@@ -688,6 +783,7 @@ office_login_post_url = "https://example.cybozu.com/api/auth/redirect.do"
                 base_url: "https://example.cybozu.com/o/ag.cgi".to_string(),
                 office_login_url: None,
                 office_login_post_url: None,
+                session_cache_path: None,
                 basic_username_env: None,
                 basic_password_env: None,
                 basic_username: None,
@@ -775,6 +871,7 @@ fixture:
             base_url: "https://example.cybozu.com/o/ag.cgi".to_string(),
             office_login_url: None,
             office_login_post_url: None,
+            session_cache_path: None,
             basic_username_env: None,
             basic_password_env: None,
             basic_username: Some("basic-user".to_string()),
@@ -812,6 +909,7 @@ fixture:
                 base_url: "https://example.cybozu.com/o/ag.cgi".to_string(),
                 office_login_url: None,
                 office_login_post_url: None,
+                session_cache_path: None,
                 basic_username_env: None,
                 basic_password_env: None,
                 basic_username: Some("basic-user".to_string()),

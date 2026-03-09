@@ -12,6 +12,9 @@ base_url = "https://example.cybozu.com/o/ag.cgi"
 office_login_url = "https://example.cybozu.com/login"
 office_login_post_url = "https://example.cybozu.com/api/auth/redirect.do"
 
+# ログイン後の Cookie を再利用する保存先。未指定時は XDG_STATE_HOME/cbzcal/session-cookies.json
+# session_cache_path = "/home/you/.local/state/cbzcal/session-cookies.json"
+
 # 前段 Basic 認証がある場合に使う環境変数名
 basic_username_env = "CBZCAL_BASIC_USER"
 basic_password_env = "CBZCAL_BASIC_PASS"

@@ -1,12 +1,19 @@
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    fs,
+    io::{BufReader, BufWriter},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
+use cookie_store::{CookieStore, serde::json as cookie_json};
 use reqwest::{
     Url,
     blocking::{Client, RequestBuilder},
     header::LOCATION,
 };
+use reqwest_cookie_store::CookieStoreMutex;
 use scraper::{ElementRef, Html, Selector};
 use serde::Serialize;
 use serde_json::Value;
@@ -22,6 +29,7 @@ const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
 pub struct CybozuHtmlBackend {
     config: CybozuHtmlConfig,
     client: Client,
+    cookie_store: Arc<CookieStoreMutex>,
 }
 
 #[derive(Clone)]
@@ -117,14 +125,19 @@ impl CybozuHtmlBackend {
             .user_agent
             .clone()
             .unwrap_or_else(|| format!("cbzcal/{}", env!("CARGO_PKG_VERSION")));
+        let cookie_store = Arc::new(CookieStoreMutex::new(load_cookie_store(&config)?));
 
         let client = Client::builder()
-            .cookie_store(true)
+            .cookie_provider(cookie_store.clone())
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(user_agent)
             .build()?;
 
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            cookie_store,
+        })
     }
 
     pub fn probe_login(config: CybozuHtmlConfig) -> Result<LoginProbeReport> {
@@ -179,6 +192,7 @@ impl CybozuHtmlBackend {
             let login = self
                 .execute_office_login(&initial, &basic_credentials, &office_credentials)
                 .context("Cybozu ログインシーケンスに失敗しました")?;
+            self.persist_cookie_store()?;
             let login_page_title = initial_page_title.clone();
             let final_url_after_login = login.final_response.url.clone();
             let login_body_hint = body_hint(&login.final_response.body);
@@ -502,6 +516,7 @@ impl CybozuHtmlBackend {
             let login = self
                 .execute_office_login(&initial, &basic_credentials, &office_credentials)
                 .context("Cybozu ログインシーケンスに失敗しました")?;
+            self.persist_cookie_store()?;
             self.fetch_schedule_index(
                 &basic_credentials,
                 None,
@@ -516,7 +531,13 @@ impl CybozuHtmlBackend {
             bail!("初回ページが login/authenticated のどちらにも判定できませんでした");
         };
 
+        self.persist_cookie_store()?;
+
         Ok((basic_credentials, first_schedule_index))
+    }
+
+    fn persist_cookie_store(&self) -> Result<()> {
+        persist_cookie_store(&self.config, &self.cookie_store)
     }
 
     fn fetch_schedule_index(
@@ -1153,6 +1174,89 @@ fn request_origin(url: &str) -> Result<String> {
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("host がありません"))?;
     Ok(format!("{}://{}", parsed.scheme(), host))
+}
+
+fn load_cookie_store(config: &CybozuHtmlConfig) -> Result<CookieStore> {
+    let path = config.session_cache_path();
+    if !path.exists() {
+        return Ok(CookieStore::default());
+    }
+
+    ensure_private_session_permissions(&path)?;
+    let file = fs::File::open(&path)
+        .with_context(|| format!("セッション Cookie を開けません: {}", path.display()))?;
+    cookie_json::load_all(BufReader::new(file)).map_err(|error| {
+        anyhow::anyhow!(
+            "セッション Cookie を読み込めません: {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn persist_cookie_store(
+    config: &CybozuHtmlConfig,
+    cookie_store: &Arc<CookieStoreMutex>,
+) -> Result<()> {
+    let path = config.session_cache_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "セッション Cookie ディレクトリを作成できません: {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let file = fs::File::create(&path)
+        .with_context(|| format!("セッション Cookie を保存できません: {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).with_context(|| {
+            format!(
+                "セッション Cookie の権限を設定できません: {}",
+                path.display()
+            )
+        })?;
+    }
+
+    let guard = cookie_store
+        .lock()
+        .map_err(|_| anyhow::anyhow!("セッション Cookie ストアをロックできません"))?;
+    let mut writer = BufWriter::new(file);
+    cookie_json::save_incl_expired_and_nonpersistent(&guard, &mut writer).map_err(|error| {
+        anyhow::anyhow!(
+            "セッション Cookie を書き込めません: {}: {error}",
+            path.display()
+        )
+    })
+}
+
+#[cfg(unix)]
+fn ensure_private_session_permissions(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::metadata(path).with_context(|| {
+        format!(
+            "セッション Cookie の情報を取得できません: {}",
+            path.display()
+        )
+    })?;
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode == 0o400 || mode == 0o600 {
+        return Ok(());
+    }
+
+    bail!(
+        "セッション Cookie ファイル {} の権限は 0400 または 0600 である必要があります: 現在 {:o}",
+        path.display(),
+        mode
+    )
+}
+
+#[cfg(not(unix))]
+fn ensure_private_session_permissions(_path: &std::path::Path) -> Result<()> {
+    Ok(())
 }
 
 fn body_hint(body: &str) -> String {
