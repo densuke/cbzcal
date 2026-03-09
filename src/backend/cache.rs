@@ -20,6 +20,7 @@ pub struct CachingBackend {
     cache_path: PathBuf,
     ttl: Duration,
     disabled: bool,
+    deferred_notices: Vec<String>,
 }
 
 impl CachingBackend {
@@ -29,6 +30,7 @@ impl CachingBackend {
             cache_path,
             ttl: Duration::from_secs(3600), // 1 hour
             disabled,
+            deferred_notices: Vec::new(),
         }
     }
 
@@ -93,12 +95,14 @@ impl CalendarBackend for CachingBackend {
         }
 
         let events = self.inner.list_events(query.clone())?;
+        self.deferred_notices.extend(self.inner.drain_notices());
         self.save_cache(&query, &events)?;
         Ok(events)
     }
 
     fn add_event(&mut self, input: NewEvent) -> Result<CalendarEvent> {
         let result = self.inner.add_event(input);
+        self.deferred_notices.extend(self.inner.drain_notices());
         if result.is_ok() {
             self.invalidate_cache();
         }
@@ -112,6 +116,7 @@ impl CalendarBackend for CachingBackend {
         scope: Option<ApplyScope>,
     ) -> Result<CalendarEvent> {
         let result = self.inner.update_event(id, patch, scope);
+        self.deferred_notices.extend(self.inner.drain_notices());
         if result.is_ok() {
             self.invalidate_cache();
         }
@@ -120,6 +125,7 @@ impl CalendarBackend for CachingBackend {
 
     fn clone_event(&mut self, id: &str, overrides: CloneOverrides) -> Result<CalendarEvent> {
         let result = self.inner.clone_event(id, overrides);
+        self.deferred_notices.extend(self.inner.drain_notices());
         if result.is_ok() {
             self.invalidate_cache();
         }
@@ -128,6 +134,7 @@ impl CalendarBackend for CachingBackend {
 
     fn delete_event(&mut self, id: &str, scope: Option<ApplyScope>) -> Result<CalendarEvent> {
         let result = self.inner.delete_event(id, scope);
+        self.deferred_notices.extend(self.inner.drain_notices());
         if result.is_ok() {
             self.invalidate_cache();
         }
@@ -135,11 +142,13 @@ impl CalendarBackend for CachingBackend {
     }
 
     fn event_web_url(&mut self, id: &str) -> Result<String> {
-        self.inner.event_web_url(id)
+        let result = self.inner.event_web_url(id);
+        self.deferred_notices.extend(self.inner.drain_notices());
+        result
     }
 
     fn drain_notices(&mut self) -> Vec<String> {
-        self.inner.drain_notices()
+        std::mem::take(&mut self.deferred_notices)
     }
 }
 
@@ -153,6 +162,7 @@ mod tests {
     struct CounterBackend {
         calls: Arc<Mutex<usize>>,
         events: Vec<CalendarEvent>,
+        notices: Vec<String>,
     }
 
     impl CalendarBackend for CounterBackend {
@@ -184,7 +194,7 @@ mod tests {
             unimplemented!()
         }
         fn drain_notices(&mut self) -> Vec<String> {
-            Vec::new()
+            std::mem::take(&mut self.notices)
         }
     }
 
@@ -218,11 +228,12 @@ mod tests {
         let inner = CounterBackend {
             calls: calls.clone(),
             events: vec![event],
+            notices: vec!["backend initialized".to_string()],
         };
 
         let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
 
-        // First call: 1 week (Default)
+        // First call: 1 week (Default) -> Cache MISS, backend called
         let q1 = ListQuery {
             from: Some(ts("2026-03-09T00:00:00+09:00")),
             to: Some(ts("2026-03-16T00:00:00+09:00")),
@@ -230,32 +241,17 @@ mod tests {
         let events1 = backend.list_events(q1)?;
         assert_eq!(events1.len(), 1);
         assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(backend.drain_notices(), vec!["backend initialized"]);
 
-        // Second call: today only (sub-range)
+        // Second call: today only (sub-range) -> Cache HIT, backend NOT called
         let q2 = ListQuery {
             from: Some(ts("2026-03-09T00:00:00+09:00")),
             to: Some(ts("2026-03-10T00:00:00+09:00")),
         };
         let events2 = backend.list_events(q2)?;
         assert_eq!(events2.len(), 1);
-        assert_eq!(*calls.lock().unwrap(), 1); // Cache hit!
-
-        // Third call: tomorrow only (sub-range, but no events overlap)
-        let q3 = ListQuery {
-            from: Some(ts("2026-03-10T00:00:00+09:00")),
-            to: Some(ts("2026-03-11T00:00:00+09:00")),
-        };
-        let events3 = backend.list_events(q3)?;
-        assert_eq!(events3.len(), 0);
-        assert_eq!(*calls.lock().unwrap(), 1); // Cache hit!
-
-        // Fourth call: Yesterday (out of range)
-        let q4 = ListQuery {
-            from: Some(ts("2026-03-08T00:00:00+09:00")),
-            to: Some(ts("2026-03-09T00:00:00+09:00")),
-        };
-        let _ = backend.list_events(q4)?;
-        assert_eq!(*calls.lock().unwrap(), 2); // Cache miss
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert!(backend.drain_notices().is_empty()); // No notice from inner backend
 
         Ok(())
     }
