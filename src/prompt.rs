@@ -1,16 +1,17 @@
+#![allow(clippy::type_complexity)]
 use anyhow::{Context, Result, bail};
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::ApplyScope,
-    cli::{
-        AddArgs, ApplyScopeArg, CloneArgs, DeleteArgs, EventsCommand, ListArgs, UpdateArgs,
-        current_jst_date, parse_duration, parse_flexible_date, parse_time_of_day, parse_timestamp,
-        to_jst_datetime,
-    },
+    cli::{AddArgs, ApplyScopeArg, CloneArgs, DeleteArgs, EventsCommand, ListArgs, UpdateArgs},
     config::{AppConfig, OllamaConfig},
+    datetime::{
+        current_jst_date, normalize_prompt_duration, normalize_prompt_time, parse_duration,
+        parse_flexible_date, parse_prompt_timestamp, to_jst_datetime,
+    },
     model::{CalendarEvent, EventVisibility},
 };
 
@@ -631,10 +632,10 @@ fn resolve_target_window(
     let Some(date_input) = plan.date.as_deref() else {
         return Ok((None, None));
     };
-    let date = parse_flexible_date(date_input, anchor).map_err(anyhow::Error::msg)?;
+    let date = parse_flexible_date(date_input, anchor)?;
 
     if plan.all_day.unwrap_or(false) {
-        let start = to_jst_datetime(date, 0, 0).map_err(anyhow::Error::msg)?;
+        let start = to_jst_datetime(date, 0, 0)?;
         let end = start + chrono::TimeDelta::days(1);
         return Ok((Some(start), Some(end)));
     }
@@ -643,13 +644,15 @@ fn resolve_target_window(
         .at
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("date を使う場合は at も必要です"))?;
-    let (start_hour, start_minute) = parse_prompt_time_of_day(at)?;
-    let start = to_jst_datetime(date, start_hour, start_minute).map_err(anyhow::Error::msg)?;
+    let (start_hour, start_minute) =
+        crate::datetime::parse_time_of_day(&normalize_prompt_time(at))?;
+    let start = to_jst_datetime(date, start_hour, start_minute)?;
     let end = if let Some(until) = &plan.until {
-        let (end_hour, end_minute) = parse_prompt_time_of_day(until)?;
-        to_jst_datetime(date, end_hour, end_minute).map_err(anyhow::Error::msg)?
+        let (end_hour, end_minute) =
+            crate::datetime::parse_time_of_day(&normalize_prompt_time(until))?;
+        to_jst_datetime(date, end_hour, end_minute)?
     } else if let Some(duration) = &plan.duration {
-        start + parse_duration(&normalize_prompt_duration(duration)).map_err(anyhow::Error::msg)?
+        start + parse_duration(&normalize_prompt_duration(duration))?
     } else {
         bail!("date と at を使う場合は until か for も必要です");
     };
@@ -664,113 +667,6 @@ fn parse_optional_timestamp(
     input
         .map(|value| parse_prompt_timestamp(value, anchor, context_date))
         .transpose()
-}
-
-fn parse_prompt_timestamp(
-    input: &str,
-    anchor: NaiveDate,
-    context_date: Option<&str>,
-) -> Result<DateTime<FixedOffset>> {
-    if let Ok(timestamp) = parse_timestamp(input) {
-        return Ok(timestamp);
-    }
-
-    let normalized = normalize_prompt_datetime(input);
-    for format in [
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y/%m/%d %H:%M:%S",
-        "%Y/%m/%d %H:%M",
-    ] {
-        if let Ok(naive) = NaiveDateTime::parse_from_str(&normalized, format) {
-            return jst_from_naive(naive);
-        }
-    }
-
-    if let Ok(date) = parse_flexible_date(&normalized, anchor) {
-        return to_jst_datetime(date, 0, 0).map_err(anyhow::Error::msg);
-    }
-
-    if let Some(context_date) = context_date {
-        let date = parse_flexible_date(context_date, anchor).map_err(anyhow::Error::msg)?;
-        let (hour, minute) = parse_prompt_time_of_day(&normalized)?;
-        return to_jst_datetime(date, hour, minute).map_err(anyhow::Error::msg);
-    }
-
-    bail!(
-        "日時を解釈できませんでした: {input}. RFC3339 に加えて `2026-03-10 17:30` や `17:30` + `date` を受け付けます"
-    )
-}
-
-fn parse_prompt_time_of_day(input: &str) -> Result<(u32, u32)> {
-    let normalized = normalize_prompt_time(input);
-    parse_time_of_day(&normalized).map_err(anyhow::Error::msg)
-}
-
-fn normalize_prompt_datetime(input: &str) -> String {
-    normalize_prompt_time(input.trim()).replace('　', " ")
-}
-
-fn normalize_prompt_time(input: &str) -> String {
-    let mut normalized = input.trim().replace("時半", ":30");
-    normalized = normalized.replace("時", ":");
-    normalized = normalized.replace("分", "");
-    normalized = normalized.replace('：', ":");
-    if let Some(stripped) = normalized
-        .strip_suffix('z')
-        .or_else(|| normalized.strip_suffix('Z'))
-    {
-        normalized = stripped.to_string();
-    }
-    normalized = strip_trailing_timezone_offset(&normalized).to_string();
-    let parts = normalized.split(':').collect::<Vec<_>>();
-    if parts.len() >= 3 {
-        normalized = format!("{}:{}", parts[0], parts[1]);
-    }
-    if normalized.ends_with(':') {
-        normalized.pop();
-    }
-    normalized
-}
-
-fn strip_trailing_timezone_offset(input: &str) -> &str {
-    if input.len() < 6 {
-        return input;
-    }
-    let suffix = &input[input.len() - 6..];
-    let bytes = suffix.as_bytes();
-    let is_offset = matches!(bytes[0], b'+' | b'-')
-        && bytes[1].is_ascii_digit()
-        && bytes[2].is_ascii_digit()
-        && bytes[3] == b':'
-        && bytes[4].is_ascii_digit()
-        && bytes[5].is_ascii_digit();
-    if is_offset {
-        &input[..input.len() - 6]
-    } else {
-        input
-    }
-}
-
-fn normalize_prompt_duration(input: &str) -> String {
-    input
-        .trim()
-        .replace("時間", "h")
-        .replace("時", "h")
-        .replace("分", "m")
-        .replace("日", "d")
-        .replace('＋', "+")
-        .replace('　', "")
-}
-
-fn jst_from_naive(naive: NaiveDateTime) -> Result<DateTime<FixedOffset>> {
-    FixedOffset::east_opt(9 * 60 * 60)
-        .expect("jst")
-        .from_local_datetime(&naive)
-        .single()
-        .ok_or_else(|| anyhow::anyhow!("日時を構築できません"))
 }
 
 fn parse_scope_arg(input: Option<&str>) -> Result<Option<ApplyScopeArg>> {

@@ -1,14 +1,16 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeDelta, TimeZone, Utc};
+use chrono::{DateTime, Days, FixedOffset, NaiveDate, TimeDelta};
 use clap::ArgAction;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::backend::ListQuery;
+use crate::datetime::{
+    current_jst_date, parse_duration, parse_flexible_date, parse_flexible_datetime,
+    parse_time_of_day, parse_timestamp, to_jst_datetime,
+};
 use crate::model::{CloneOverrides, EventPatch, EventVisibility, NewEvent};
-
-const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,6 +41,7 @@ pub struct Cli {
 pub enum Command {
     Doctor,
     ProbeLogin,
+    #[allow(clippy::large_enum_variant)]
     Events(EventsArgs),
 }
 
@@ -84,6 +87,7 @@ impl EventsArgs {
 
 #[derive(Debug)]
 pub enum ResolvedEventsArgs {
+    #[allow(clippy::large_enum_variant)]
     Command(EventsCommand),
     Prompt(PromptArgs),
 }
@@ -139,7 +143,7 @@ impl ListArgs {
     }
 
     fn query_from(&self, anchor: NaiveDate) -> Result<ListQuery> {
-        resolve_list_query(self, anchor).map_err(|error| anyhow::anyhow!(error))
+        resolve_list_query(self, anchor).map_err(|error: String| anyhow::anyhow!(error))
     }
 
     fn is_empty(&self) -> bool {
@@ -202,7 +206,7 @@ impl AddArgs {
     }
 
     fn new_event_from(&self, anchor: NaiveDate) -> Result<NewEvent> {
-        resolve_add_event(self, anchor).map_err(|error| anyhow::anyhow!(error))
+        resolve_add_event(self, anchor).map_err(|error: String| anyhow::anyhow!(error))
     }
 }
 
@@ -340,10 +344,10 @@ fn resolve_list_query(args: &ListArgs, anchor: NaiveDate) -> Result<ListQuery, S
     }
 
     if let Some(date) = &args.date {
-        let date = parse_flexible_date(date, anchor)?;
-        let from = to_jst_datetime(date, 0, 0)?;
+        let date = parse_flexible_date(date, anchor).map_err(|e| e.to_string())?;
+        let from = to_jst_datetime(date, 0, 0).map_err(|e| e.to_string())?;
         let to = if let Some(duration) = &args.duration {
-            from + parse_duration(duration)?
+            from + parse_duration(duration).map_err(|e| e.to_string())?
         } else {
             from + TimeDelta::days(1)
         };
@@ -356,16 +360,16 @@ fn resolve_list_query(args: &ListArgs, anchor: NaiveDate) -> Result<ListQuery, S
     let from = args
         .from
         .as_deref()
-        .map(|value| parse_flexible_datetime(value, anchor))
+        .map(|value| parse_flexible_datetime(value, anchor).map_err(|e| e.to_string()))
         .transpose()?;
     let to = if let Some(duration) = &args.duration {
         let from =
             from.ok_or_else(|| "`--for` を使う場合は `--from` か `--date` が必要です".to_string())?;
-        Some(from + parse_duration(duration)?)
+        Some(from + parse_duration(duration).map_err(|e| e.to_string())?)
     } else {
         args.to
             .as_deref()
-            .map(|value| parse_flexible_datetime(value, anchor))
+            .map(|value| parse_flexible_datetime(value, anchor).map_err(|e| e.to_string()))
             .transpose()?
     };
 
@@ -399,7 +403,7 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
         let date = args.date.as_deref().ok_or_else(|| {
             "`--date` を指定するか、`--start` / `--end` を使ってください".to_string()
         })?;
-        let date = parse_flexible_date(date, anchor)?;
+        let date = parse_flexible_date(date, anchor).map_err(|e| e.to_string())?;
 
         if args.all_day || (args.at.is_none() && args.until.is_none() && args.duration.is_none()) {
             if args.at.is_some() || args.until.is_some() || args.duration.is_some() {
@@ -409,8 +413,14 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
                 );
             }
             (
-                to_jst_datetime(date, 0, 0)?,
-                to_jst_datetime(next_date(date)?, 0, 0)?,
+                to_jst_datetime(date, 0, 0).map_err(|e| e.to_string())?,
+                to_jst_datetime(
+                    date.checked_add_days(Days::new(1))
+                        .ok_or_else(|| "翌日を計算できません".to_string())?,
+                    0,
+                    0,
+                )
+                .map_err(|e| e.to_string())?,
             )
         } else {
             let at = args
@@ -420,13 +430,14 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
             if args.until.is_some() && args.duration.is_some() {
                 return Err("`--until` と `--for` はどちらか一方だけ指定してください".to_string());
             }
-            let (start_hour, start_minute) = parse_time_of_day(at)?;
-            let starts_at = to_jst_datetime(date, start_hour, start_minute)?;
+            let (start_hour, start_minute) = parse_time_of_day(at).map_err(|e| e.to_string())?;
+            let starts_at =
+                to_jst_datetime(date, start_hour, start_minute).map_err(|e| e.to_string())?;
             let ends_at = if let Some(until) = &args.until {
-                let (end_hour, end_minute) = parse_time_of_day(until)?;
-                to_jst_datetime(date, end_hour, end_minute)?
+                let (end_hour, end_minute) = parse_time_of_day(until).map_err(|e| e.to_string())?;
+                to_jst_datetime(date, end_hour, end_minute).map_err(|e| e.to_string())?
             } else if let Some(duration) = &args.duration {
-                starts_at + parse_duration(duration)?
+                starts_at + parse_duration(duration).map_err(|e| e.to_string())?
             } else {
                 return Err(
                     "`--at` を使う場合は `--until` か `--for` を指定してください".to_string(),
@@ -453,171 +464,6 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
     event.validate().map_err(|error| error.to_string())?;
 
     Ok(event)
-}
-
-pub(crate) fn parse_flexible_datetime(
-    input: &str,
-    anchor: NaiveDate,
-) -> Result<DateTime<FixedOffset>, String> {
-    DateTime::parse_from_rfc3339(input).or_else(|_| {
-        let date = parse_flexible_date(input, anchor)?;
-        to_jst_datetime(date, 0, 0).map_err(|error| error.to_string())
-    })
-}
-
-pub(crate) fn parse_flexible_date(input: &str, anchor: NaiveDate) -> Result<NaiveDate, String> {
-    let normalized = input.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "today" => return Ok(anchor),
-        "tomorrow" => return next_date(anchor).map_err(|error| error.to_string()),
-        "yesterday" => {
-            return anchor
-                .checked_sub_days(Days::new(1))
-                .ok_or_else(|| "日付を計算できません".to_string());
-        }
-        _ => {}
-    }
-
-    if let Some(date) = parse_relative_date(&normalized, anchor)? {
-        return Ok(date);
-    }
-
-    NaiveDate::parse_from_str(&normalized, "%Y-%m-%d")
-        .or_else(|_| NaiveDate::parse_from_str(&normalized, "%Y/%m/%d"))
-        .or_else(|_| parse_month_day(&normalized, anchor.year()))
-        .map_err(|_| {
-            format!(
-                "日付は today/tomorrow/yesterday/+3d/3/10/2026-03-10 のいずれかで指定してください: {input}"
-            )
-        })
-}
-
-fn parse_relative_date(input: &str, anchor: NaiveDate) -> Result<Option<NaiveDate>, String> {
-    let Some(sign) = input.chars().next().filter(|ch| *ch == '+' || *ch == '-') else {
-        return Ok(None);
-    };
-    let unit = input
-        .chars()
-        .last()
-        .ok_or_else(|| "相対日付を解釈できません".to_string())?;
-    let magnitude = input[1..input.len().saturating_sub(1)]
-        .parse::<u64>()
-        .map_err(|_| format!("相対日付を解釈できません: {input}"))?;
-    let days = match unit {
-        'd' => magnitude,
-        'w' => magnitude
-            .checked_mul(7)
-            .ok_or_else(|| format!("相対日付が大きすぎます: {input}"))?,
-        _ => return Ok(None),
-    };
-
-    let date = if sign == '+' {
-        anchor
-            .checked_add_days(Days::new(days))
-            .ok_or_else(|| format!("相対日付を計算できません: {input}"))?
-    } else {
-        anchor
-            .checked_sub_days(Days::new(days))
-            .ok_or_else(|| format!("相対日付を計算できません: {input}"))?
-    };
-    Ok(Some(date))
-}
-
-fn parse_month_day(input: &str, year: i32) -> Result<NaiveDate, chrono::ParseError> {
-    NaiveDate::parse_from_str(&format!("{year}/{input}"), "%Y/%m/%d")
-}
-
-pub(crate) fn parse_time_of_day(input: &str) -> Result<(u32, u32), String> {
-    let normalized = input.trim();
-    if let Some((hour, minute)) = normalized.split_once(':') {
-        let hour = hour
-            .parse::<u32>()
-            .map_err(|_| format!("時刻を解釈できません: {input}"))?;
-        let minute = minute
-            .parse::<u32>()
-            .map_err(|_| format!("時刻を解釈できません: {input}"))?;
-        if hour > 23 || minute > 59 {
-            return Err(format!("時刻を解釈できません: {input}"));
-        }
-        return Ok((hour, minute));
-    }
-
-    let hour = normalized
-        .parse::<u32>()
-        .map_err(|_| format!("時刻は 9 または 9:30 のように指定してください: {input}"))?;
-    if hour > 23 {
-        return Err(format!("時刻を解釈できません: {input}"));
-    }
-    Ok((hour, 0))
-}
-
-pub(crate) fn parse_duration(input: &str) -> Result<TimeDelta, String> {
-    let value = input.trim().to_ascii_lowercase();
-    if value.is_empty() {
-        return Err("期間が空です".to_string());
-    }
-
-    let mut total = TimeDelta::zero();
-    let mut cursor = 0usize;
-    let bytes = value.as_bytes();
-    while cursor < bytes.len() {
-        let start = cursor;
-        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
-            cursor += 1;
-        }
-        if start == cursor || cursor >= bytes.len() {
-            return Err(format!(
-                "期間は 30m / 2h / 2h30m / 7d のように指定してください: {input}"
-            ));
-        }
-        let amount = value[start..cursor]
-            .parse::<i64>()
-            .map_err(|_| format!("期間を解釈できません: {input}"))?;
-        let unit = bytes[cursor] as char;
-        cursor += 1;
-        let delta = match unit {
-            'm' => TimeDelta::minutes(amount),
-            'h' => TimeDelta::hours(amount),
-            'd' => TimeDelta::days(amount),
-            _ => return Err(format!("期間を解釈できません: {input}")),
-        };
-        total += delta;
-    }
-
-    if total <= TimeDelta::zero() {
-        return Err("期間は 0 より大きい必要があります".to_string());
-    }
-
-    Ok(total)
-}
-
-pub(crate) fn to_jst_datetime(
-    date: NaiveDate,
-    hour: u32,
-    minute: u32,
-) -> Result<DateTime<FixedOffset>, String> {
-    jst_offset()
-        .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, 0)
-        .single()
-        .ok_or_else(|| "日時を構築できません".to_string())
-}
-
-fn next_date(date: NaiveDate) -> Result<NaiveDate, String> {
-    date.checked_add_days(Days::new(1))
-        .ok_or_else(|| "翌日を計算できません".to_string())
-}
-
-pub(crate) fn current_jst_date() -> NaiveDate {
-    Utc::now().with_timezone(&jst_offset()).date_naive()
-}
-
-fn jst_offset() -> FixedOffset {
-    FixedOffset::east_opt(JST_OFFSET_SECONDS).expect("valid JST offset")
-}
-
-pub(crate) fn parse_timestamp(input: &str) -> Result<DateTime<FixedOffset>, String> {
-    DateTime::parse_from_rfc3339(input)
-        .map_err(|error| format!("RFC3339 形式の日時で指定してください: {error}"))
 }
 
 #[cfg(test)]
@@ -738,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_compound_duration() {
+    fn parses_compound_duration_test() {
         assert_eq!(
             parse_duration("2h30m").expect("duration"),
             TimeDelta::minutes(150)
@@ -746,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_relative_dates() {
+    fn parses_relative_dates_test() {
         assert_eq!(
             parse_flexible_date("+3d", anchor()).expect("date"),
             NaiveDate::from_ymd_opt(2026, 3, 12).expect("date")

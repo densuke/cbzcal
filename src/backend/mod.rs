@@ -1,11 +1,13 @@
 pub mod cybozu_html;
 pub mod fixture;
+pub mod id;
 
-use anyhow::{Result, bail};
-use chrono::{DateTime, Days, FixedOffset, TimeZone, Utc};
+use anyhow::Result;
+use chrono::{DateTime, FixedOffset};
 
 use crate::{
     config::{AppConfig, BackendKind},
+    datetime::current_jst_midnight,
     model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent},
 };
 
@@ -52,20 +54,6 @@ impl ListQuery {
     }
 }
 
-fn current_jst_midnight() -> DateTime<FixedOffset> {
-    let offset = FixedOffset::east_opt(9 * 60 * 60).expect("valid JST offset");
-    let today = Utc::now().with_timezone(&offset).date_naive();
-    let midnight = today
-        .checked_add_days(Days::new(0))
-        .expect("same date")
-        .and_hms_opt(0, 0, 0)
-        .expect("midnight");
-    offset
-        .from_local_datetime(&midnight)
-        .single()
-        .expect("valid local midnight")
-}
-
 pub trait CalendarBackend {
     fn name(&self) -> &'static str;
     fn list_events(&mut self, query: ListQuery) -> Result<Vec<CalendarEvent>>;
@@ -79,7 +67,7 @@ pub trait CalendarBackend {
     fn clone_event(&mut self, id: &str, overrides: CloneOverrides) -> Result<CalendarEvent>;
     fn delete_event(&mut self, id: &str, scope: Option<ApplyScope>) -> Result<CalendarEvent>;
     fn event_web_url(&mut self, _id: &str) -> Result<String> {
-        bail!("このバックエンドは `--web` に未対応です")
+        anyhow::bail!("このバックエンドは `--web` に未対応です")
     }
     fn drain_notices(&mut self) -> Vec<String> {
         Vec::new()

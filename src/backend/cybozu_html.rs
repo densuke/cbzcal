@@ -19,12 +19,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{
-    backend::{ApplyScope, CalendarBackend, ListQuery},
+    backend::{ApplyScope, CalendarBackend, ListQuery, id::short_id_from_event_id},
     config::{CredentialPair, CredentialSource, CybozuHtmlConfig},
-    model::{
-        CalendarEvent, CloneOverrides, EventPatch, EventVisibility, NewEvent,
-        short_id_from_event_id,
-    },
+    model::{CalendarEvent, CloneOverrides, EventPatch, EventVisibility, NewEvent},
 };
 
 const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
@@ -892,11 +889,11 @@ impl CybozuHtmlBackend {
             let status = response.status().as_u16();
             let url = response.url().to_string();
             let body = response.text()?;
-            if is_redirect_stub_page(&body) {
-                if let Some(redirect_url) = extract_js_redirect_url(&url, &body) {
-                    plan = RequestPlan::Get(redirect_url);
-                    continue;
-                }
+            if is_redirect_stub_page(&body)
+                && let Some(redirect_url) = extract_js_redirect_url(&url, &body)
+            {
+                plan = RequestPlan::Get(redirect_url);
+                continue;
             }
 
             return Ok(ResponseSnapshot { status, url, body });
@@ -1450,10 +1447,10 @@ fn validate_supported_delete_form(
         None => bail!("削除フォームの Member が見つかりません"),
     }
 
-    if form_value(fields, "Apply").is_none() {
-        if matches!(requested_scope, Some(ApplyScope::After | ApplyScope::All)) {
-            bail!("通常予定では `--scope after|all` を使えません");
-        }
+    if form_value(fields, "Apply").is_none()
+        && matches!(requested_scope, Some(ApplyScope::After | ApplyScope::All))
+    {
+        bail!("通常予定では `--scope after|all` を使えません");
     }
 
     Ok(())
