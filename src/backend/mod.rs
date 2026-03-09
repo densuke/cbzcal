@@ -1,9 +1,13 @@
+pub mod cache;
 pub mod cybozu_html;
 pub mod fixture;
 pub mod id;
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use chrono::{DateTime, FixedOffset};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{AppConfig, BackendKind},
@@ -11,10 +15,11 @@ use crate::{
     model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent},
 };
 
+pub use cache::CachingBackend;
 pub use cybozu_html::CybozuHtmlBackend;
 pub use fixture::FixtureBackend;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListQuery {
     pub from: Option<DateTime<FixedOffset>>,
     pub to: Option<DateTime<FixedOffset>>,
@@ -74,23 +79,29 @@ pub trait CalendarBackend {
     }
 }
 
-pub fn build_backend(config: &AppConfig) -> Result<Box<dyn CalendarBackend>> {
-    match config.backend {
+pub fn build_backend(
+    config: &AppConfig,
+    no_cache: bool,
+    cache_path: PathBuf,
+) -> Result<Box<dyn CalendarBackend>> {
+    let inner: Box<dyn CalendarBackend> = match config.backend {
         BackendKind::Fixture => {
             let fixture = config
                 .fixture
                 .clone()
                 .expect("fixture backend requires fixture config");
-            Ok(Box::new(FixtureBackend::open(fixture.path)?))
+            Box::new(FixtureBackend::open(fixture.path)?)
         }
         BackendKind::CybozuHtml => {
             let cybozu = config
                 .cybozu_html
                 .clone()
                 .expect("cybozu-html backend requires config");
-            Ok(Box::new(CybozuHtmlBackend::new(cybozu)?))
+            Box::new(CybozuHtmlBackend::new(cybozu)?)
         }
-    }
+    };
+
+    Ok(Box::new(CachingBackend::new(inner, cache_path, no_cache)))
 }
 
 #[cfg(test)]

@@ -33,7 +33,11 @@ pub fn execute(cli: Cli) -> Result<String> {
             render_json(&CybozuHtmlBackend::probe_login(cybozu)?)
         }
         Command::Events(events) => {
-            let mut backend = build_backend(&loaded.config)?;
+            let mut backend = build_backend(
+                &loaded.config,
+                cli.no_cache,
+                loaded.config.events_cache_path(),
+            )?;
             let output = match events.resolve()? {
                 ResolvedEventsArgs::Prompt(prompt) => {
                     let existing_event = extract_short_id_hint(&prompt.prompt)

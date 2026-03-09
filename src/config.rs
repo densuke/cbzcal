@@ -31,6 +31,7 @@ pub struct AppConfig {
     pub fixture: Option<FixtureConfig>,
     #[serde(rename = "cybozu-html")]
     pub cybozu_html: Option<CybozuHtmlConfig>,
+    pub events_cache_path: Option<PathBuf>,
     pub ollama: Option<OllamaConfig>,
 }
 
@@ -75,6 +76,12 @@ impl AppConfig {
         Ok(LoadedConfig { path, config })
     }
 
+    pub fn events_cache_path(&self) -> PathBuf {
+        self.events_cache_path
+            .clone()
+            .unwrap_or_else(default_events_cache_path)
+    }
+
     fn resolve_relative_paths(&mut self, config_path: &Path) {
         let base_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -89,6 +96,12 @@ impl AppConfig {
             && !path.is_absolute()
         {
             cybozu.session_cache_path = Some(normalize_path(&base_dir.join(path)));
+        }
+
+        if let Some(path) = &self.events_cache_path
+            && !path.is_absolute()
+        {
+            self.events_cache_path = Some(normalize_path(&base_dir.join(path)));
         }
     }
 }
@@ -291,6 +304,12 @@ fn xdg_state_home() -> Option<PathBuf> {
         .or_else(|| home_dir().map(|home| home.join(".local").join("state")))
 }
 
+fn xdg_cache_home() -> Option<PathBuf> {
+    env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".cache")))
+}
+
 fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME").map(PathBuf::from)
 }
@@ -301,6 +320,14 @@ fn default_session_cache_path() -> PathBuf {
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .join("cbzcal")
         .join("session-cookies.json")
+}
+
+fn default_events_cache_path() -> PathBuf {
+    xdg_cache_home()
+        .or_else(home_dir)
+        .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join("cbzcal")
+        .join("events-cache.json")
 }
 
 #[cfg(unix)]

@@ -33,6 +33,8 @@ pub struct Cli {
         help = "設定ファイルのパス。未指定時は .cbzcal.toml を PWD -> XDG -> HOME の順で探索"
     )]
     pub config: Option<PathBuf>,
+    #[arg(long, global = true, help = "キャッシュを使用しない")]
+    pub no_cache: bool,
     #[command(subcommand)]
     pub command: Command,
 }
