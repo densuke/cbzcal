@@ -109,6 +109,22 @@ impl CalendarEvent {
     pub fn duration(&self) -> Duration {
         self.ends_at - self.starts_at
     }
+
+    pub fn overlaps(
+        &self,
+        from: Option<DateTime<FixedOffset>>,
+        to: Option<DateTime<FixedOffset>>,
+    ) -> bool {
+        let start_ok = match to {
+            None => true,
+            Some(to) => self.starts_at < to,
+        };
+        let end_ok = match from {
+            None => true,
+            Some(from) => self.ends_at > from,
+        };
+        start_ok && end_ok
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -169,4 +185,76 @@ pub fn validate_time_range(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ts(input: &str) -> DateTime<FixedOffset> {
+        DateTime::parse_from_rfc3339(input).expect("timestamp")
+    }
+
+    #[test]
+    fn overlaps_test() {
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "T1".to_string(),
+            description: None,
+            starts_at: ts("2026-03-09T09:00:00+09:00"),
+            ends_at: ts("2026-03-09T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+
+        // Exactly same
+        assert!(event.overlaps(
+            Some(ts("2026-03-09T09:00:00+09:00")),
+            Some(ts("2026-03-09T10:00:00+09:00"))
+        ));
+
+        // Contained
+        assert!(event.overlaps(
+            Some(ts("2026-03-09T09:15:00+09:00")),
+            Some(ts("2026-03-09T09:45:00+09:00"))
+        ));
+
+        // Overlapping at start
+        assert!(event.overlaps(
+            Some(ts("2026-03-09T08:00:00+09:00")),
+            Some(ts("2026-03-09T09:30:00+09:00"))
+        ));
+
+        // Overlapping at end
+        assert!(event.overlaps(
+            Some(ts("2026-03-09T09:30:00+09:00")),
+            Some(ts("2026-03-09T11:00:00+09:00"))
+        ));
+
+        // Just touching at start (No overlap)
+        assert!(!event.overlaps(
+            Some(ts("2026-03-09T08:00:00+09:00")),
+            Some(ts("2026-03-09T09:00:00+09:00"))
+        ));
+
+        // Just touching at end (No overlap)
+        assert!(!event.overlaps(
+            Some(ts("2026-03-09T10:00:00+09:00")),
+            Some(ts("2026-03-09T11:00:00+09:00"))
+        ));
+
+        // Completely outside
+        assert!(!event.overlaps(
+            Some(ts("2026-03-10T09:00:00+09:00")),
+            Some(ts("2026-03-10T10:00:00+09:00"))
+        ));
+
+        // Unbounded
+        assert!(event.overlaps(None, None));
+        assert!(event.overlaps(Some(ts("2026-03-09T00:00:00+09:00")), None));
+        assert!(event.overlaps(None, Some(ts("2026-03-09T12:00:00+09:00"))));
+    }
 }

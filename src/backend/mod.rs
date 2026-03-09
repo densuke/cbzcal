@@ -57,6 +57,20 @@ impl ListQuery {
             },
         }
     }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        let from_ok = match (self.from, other.from) {
+            (None, _) => true,
+            (Some(self_from), Some(other_from)) => self_from <= other_from,
+            (Some(_), None) => false,
+        };
+        let to_ok = match (self.to, other.to) {
+            (None, _) => true,
+            (Some(self_to), Some(other_to)) => self_to >= other_to,
+            (Some(_), None) => false,
+        };
+        from_ok && to_ok
+    }
 }
 
 pub trait CalendarBackend {
@@ -146,5 +160,29 @@ mod tests {
 
         assert_eq!(query.from, Some(ts("2026-03-09T00:00:00+09:00")));
         assert_eq!(query.to, Some(ts("2026-03-16T00:00:00+09:00")));
+    }
+
+    #[test]
+    fn query_contains_test() {
+        let q1 = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        let q_sub = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-10T00:00:00+09:00")),
+        };
+        let q_out = ListQuery {
+            from: Some(ts("2026-03-08T00:00:00+09:00")),
+            to: Some(ts("2026-03-09T00:00:00+09:00")),
+        };
+
+        assert!(q1.contains(&q1));
+        assert!(q1.contains(&q_sub));
+        assert!(!q1.contains(&q_out));
+
+        let q_unbounded = ListQuery { from: None, to: None };
+        assert!(q_unbounded.contains(&q1));
+        assert!(!q1.contains(&q_unbounded));
     }
 }
