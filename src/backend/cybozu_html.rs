@@ -615,6 +615,38 @@ impl CybozuHtmlBackend {
         Ok(response)
     }
 
+    fn schedule_modify_url(&self, identity: &ScheduleViewIdentity) -> Result<String> {
+        let mut url = Url::parse(&self.config.base_url)?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            query.append_pair("page", "ScheduleModify");
+            query.append_pair("UID", &identity.uid);
+            query.append_pair("GID", &identity.gid);
+            query.append_pair("Date", &identity.date);
+            query.append_pair("BDate", &identity.bdate);
+            query.append_pair("sEID", &identity.seid);
+            query.append_pair("cp", "sgv");
+        }
+
+        Ok(url.to_string())
+    }
+
+    fn fetch_schedule_modify(
+        &self,
+        basic_credentials: &Option<CredentialPair>,
+        identity: &ScheduleViewIdentity,
+    ) -> Result<ResponseSnapshot> {
+        let url = self.schedule_modify_url(identity)?;
+        let response = self
+            .get_following_redirects(&url, basic_credentials)
+            .with_context(|| format!("ScheduleModify の取得に失敗しました: {url}"))?;
+        if !is_schedule_modify_page(&response.url, &response.body) {
+            bail!("ScheduleModify に到達できませんでした: {}", response.url);
+        }
+        Ok(response)
+    }
+
     fn login_post_url(&self) -> Result<String> {
         self.config
             .office_login_post_url
@@ -809,8 +841,53 @@ impl CalendarBackend for CybozuHtmlBackend {
             .ok_or_else(|| anyhow::anyhow!("登録後の予定を ScheduleIndex から特定できませんでした"))
     }
 
-    fn update_event(&mut self, _id: &str, _patch: EventPatch) -> Result<CalendarEvent> {
-        bail!(self.pending_contract_error("events update"));
+    fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent> {
+        validate_supported_update_patch(&patch)?;
+
+        let identity = parse_composite_event_id(id)?;
+        let (basic_credentials, _) = self.bootstrap_authenticated_schedule_index()?;
+        let schedule_modify = self.fetch_schedule_modify(&basic_credentials, &identity)?;
+        let mut form = parse_html_form(
+            &schedule_modify.body,
+            &schedule_modify.url,
+            "ScheduleModify",
+        )?;
+        let current_event = parse_schedule_modify_event(&form.fields, &identity)?;
+        let updated_event = current_event.apply_patch(&patch)?;
+        validate_supported_update_event(&updated_event)?;
+        populate_schedule_modify_form(&mut form.fields, &updated_event, &identity);
+        let submit_response = self.post_form_following_redirects(
+            &form.action_url,
+            &form.fields,
+            &schedule_modify.url,
+            &basic_credentials,
+        )?;
+        if is_login_page(&submit_response.url, &submit_response.body) {
+            bail!("予定変更後にログイン画面へ戻りました。セッションを維持できていません");
+        }
+
+        let target_week = week_start(
+            updated_event
+                .starts_at
+                .with_timezone(&jst_offset())
+                .date_naive(),
+        );
+        let week_page =
+            self.fetch_schedule_index(&basic_credentials, Some(target_week), Some(&identity.gid))?;
+        let calendar_name = extract_calendar_name(&week_page.body);
+        let events = parse_schedule_index_events(
+            &week_page.body,
+            &week_page.url,
+            calendar_name.as_deref(),
+            Some(&identity.uid),
+        )?;
+
+        find_event_by_seid(events, &identity.seid)
+            .map(|mut event| {
+                event.description = updated_event.description.clone();
+                event
+            })
+            .ok_or_else(|| anyhow::anyhow!("更新後の予定を ScheduleIndex から特定できませんでした"))
     }
 
     fn clone_event(&mut self, _id: &str, _overrides: CloneOverrides) -> Result<CalendarEvent> {
@@ -886,6 +963,10 @@ fn is_schedule_entry_page(url: &str, body: &str) -> bool {
     url.contains("ScheduleEntry") && body.contains("name=\"ScheduleEntry\"")
 }
 
+fn is_schedule_modify_page(url: &str, body: &str) -> bool {
+    url.contains("ScheduleModify") && body.contains("name=\"ScheduleModify\"")
+}
+
 fn is_redirect_stub_page(body: &str) -> bool {
     body.contains("リダイレクト中") && body.contains("location.replace(")
 }
@@ -949,6 +1030,20 @@ fn validate_supported_add_input(input: &NewEvent) -> Result<()> {
     Ok(())
 }
 
+fn validate_supported_update_patch(patch: &EventPatch) -> Result<()> {
+    if patch.attendees.is_some() {
+        bail!("現時点の `events update` は参加者更新に未対応です");
+    }
+    if patch.facility.is_some() {
+        bail!("現時点の `events update` は設備予約更新に未対応です");
+    }
+    if patch.calendar.is_some() {
+        bail!("現時点の `events update` はカレンダー更新に未対応です");
+    }
+
+    Ok(())
+}
+
 fn is_supported_single_day_event(
     starts_at: DateTime<FixedOffset>,
     ends_at: DateTime<FixedOffset>,
@@ -965,6 +1060,19 @@ fn is_supported_single_day_event(
             .date_naive()
             .checked_add_days(Days::new(1))
             .is_some_and(|next_day| next_day == ends_at.date_naive())
+}
+
+fn validate_supported_update_event(event: &CalendarEvent) -> Result<()> {
+    let starts_at = event.starts_at.with_timezone(&jst_offset());
+    let ends_at = event.ends_at.with_timezone(&jst_offset());
+    if starts_at.second() != 0 || ends_at.second() != 0 {
+        bail!("現時点の `events update` は分単位のみ対応です");
+    }
+    if !is_supported_single_day_event(starts_at, ends_at) {
+        bail!("現時点の `events update` は単日予定のみ対応です");
+    }
+
+    Ok(())
 }
 
 fn parse_html_form(html: &str, page_url: &str, form_name: &str) -> Result<HtmlForm> {
@@ -1047,6 +1155,16 @@ fn set_form_value(fields: &mut Vec<(String, String)>, name: &str, value: impl In
     }
 }
 
+fn form_value<'a>(fields: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    fields
+        .iter()
+        .find_map(|(field_name, field_value)| (field_name == name).then_some(field_value.as_str()))
+}
+
+fn required_form_value<'a>(fields: &'a [(String, String)], name: &str) -> Result<&'a str> {
+    form_value(fields, name).ok_or_else(|| anyhow::anyhow!("必須フォーム項目 {name} がありません"))
+}
+
 fn populate_schedule_entry_form(
     fields: &mut Vec<(String, String)>,
     input: &NewEvent,
@@ -1099,6 +1217,167 @@ fn populate_schedule_entry_form(
     set_form_value(fields, "Entry", "登録する");
 }
 
+fn parse_schedule_modify_event(
+    fields: &[(String, String)],
+    identity: &ScheduleViewIdentity,
+) -> Result<CalendarEvent> {
+    let date = parse_schedule_form_date(fields)?;
+    let (starts_at, ends_at) = parse_schedule_form_time_range(fields, date)?;
+    Ok(CalendarEvent {
+        id: composite_event_id(identity),
+        title: required_form_value(fields, "Detail")?.trim().to_string(),
+        description: form_value(fields, "Memo")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        starts_at,
+        ends_at,
+        attendees: Vec::new(),
+        facility: None,
+        calendar: None,
+        version: 1,
+    })
+}
+
+fn parse_schedule_form_date(fields: &[(String, String)]) -> Result<NaiveDate> {
+    let year = required_form_value(fields, "SetDate.Year")?.parse::<i32>()?;
+    let month = required_form_value(fields, "SetDate.Month")?.parse::<u32>()?;
+    let day = required_form_value(fields, "SetDate.Day")?.parse::<u32>()?;
+    NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| anyhow::anyhow!("フォームの日付を構築できません"))
+}
+
+fn parse_schedule_form_time_range(
+    fields: &[(String, String)],
+    date: NaiveDate,
+) -> Result<(DateTime<FixedOffset>, DateTime<FixedOffset>)> {
+    let start_hour = required_form_value(fields, "SetTime.Hour")?;
+    let start_minute = required_form_value(fields, "SetTime.Minute")?;
+    let end_hour = required_form_value(fields, "EndTime.Hour")?;
+    let end_minute = required_form_value(fields, "EndTime.Minute")?;
+
+    if start_hour.is_empty()
+        && start_minute.is_empty()
+        && end_hour.is_empty()
+        && end_minute.is_empty()
+    {
+        let starts_at = jst_offset()
+            .from_local_datetime(
+                &date
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(|| anyhow::anyhow!("終日予定の開始日時を構築できません"))?,
+            )
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("終日予定の開始日時を構築できません"))?;
+        let next_day = date
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| anyhow::anyhow!("終日予定の終了日を計算できません"))?;
+        let ends_at = jst_offset()
+            .from_local_datetime(
+                &next_day
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(|| anyhow::anyhow!("終日予定の終了日時を構築できません"))?,
+            )
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("終日予定の終了日時を構築できません"))?;
+        return Ok((starts_at, ends_at));
+    }
+
+    let starts_at = schedule_form_datetime(date, start_hour, start_minute)?;
+    let ends_at = schedule_form_datetime(date, end_hour, end_minute)?;
+    Ok((starts_at, ends_at))
+}
+
+fn schedule_form_datetime(
+    date: NaiveDate,
+    hour: &str,
+    minute: &str,
+) -> Result<DateTime<FixedOffset>> {
+    let hour = hour.parse::<u32>()?;
+    let minute = minute.parse::<u32>()?;
+    if hour == 24 && minute == 0 {
+        let next_day = date
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| anyhow::anyhow!("24:00 の終了日を計算できません"))?;
+        return jst_offset()
+            .from_local_datetime(
+                &next_day
+                    .and_hms_opt(0, 0, 0)
+                    .ok_or_else(|| anyhow::anyhow!("24:00 の日時を構築できません"))?,
+            )
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("24:00 の日時を構築できません"));
+    }
+
+    jst_offset()
+        .from_local_datetime(
+            &date
+                .and_hms_opt(hour, minute, 0)
+                .ok_or_else(|| anyhow::anyhow!("フォーム日時を構築できません"))?,
+        )
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("フォーム日時を構築できません"))
+}
+
+fn populate_schedule_modify_form(
+    fields: &mut Vec<(String, String)>,
+    event: &CalendarEvent,
+    identity: &ScheduleViewIdentity,
+) {
+    let starts_at = event.starts_at.with_timezone(&jst_offset());
+    let ends_at = event.ends_at.with_timezone(&jst_offset());
+    let event_date = starts_at.date_naive();
+    let bdate = week_start(event_date);
+    let is_all_day = starts_at.hour() == 0
+        && starts_at.minute() == 0
+        && ends_at.hour() == 0
+        && ends_at.minute() == 0
+        && starts_at
+            .date_naive()
+            .checked_add_days(Days::new(1))
+            .is_some_and(|next_day| next_day == ends_at.date_naive());
+
+    set_form_value(fields, "page", "ScheduleModify");
+    set_form_value(fields, "sEID", identity.seid.clone());
+    set_form_value(fields, "UID", identity.uid.clone());
+    set_form_value(fields, "GID", identity.gid.clone());
+    set_form_value(fields, "Date", format_da_date(event_date));
+    set_form_value(fields, "BDate", format_da_date(bdate));
+    set_form_value(fields, "SetDate.Year", starts_at.year().to_string());
+    set_form_value(fields, "SetDate.Month", starts_at.month().to_string());
+    set_form_value(fields, "SetDate.Day", starts_at.day().to_string());
+    if is_all_day {
+        set_form_value(fields, "SetTime.Hour", "");
+        set_form_value(fields, "SetTime.Minute", "");
+        set_form_value(fields, "EndTime.Hour", "");
+        set_form_value(fields, "EndTime.Minute", "");
+    } else {
+        set_form_value(fields, "SetTime.Hour", starts_at.hour().to_string());
+        set_form_value(
+            fields,
+            "SetTime.Minute",
+            format!("{:02}", starts_at.minute()),
+        );
+        set_form_value(fields, "EndTime.Hour", format_end_hour(ends_at, is_all_day));
+        set_form_value(fields, "EndTime.Minute", format!("{:02}", ends_at.minute()));
+    }
+    set_form_value(fields, "Detail", event.title.trim().to_string());
+    set_form_value(
+        fields,
+        "Memo",
+        event.description.as_deref().unwrap_or("").to_string(),
+    );
+    set_form_value(fields, "Modify", "変更する");
+}
+
+fn format_end_hour(ends_at: DateTime<FixedOffset>, is_all_day: bool) -> String {
+    if is_all_day {
+        String::new()
+    } else {
+        ends_at.hour().to_string()
+    }
+}
+
 fn find_created_event(events: Vec<CalendarEvent>, input: &NewEvent) -> Option<CalendarEvent> {
     let starts_at = input.starts_at.with_timezone(&jst_offset());
     let ends_at = input.ends_at.with_timezone(&jst_offset());
@@ -1116,9 +1395,27 @@ fn find_created_event(events: Vec<CalendarEvent>, input: &NewEvent) -> Option<Ca
     Some(created)
 }
 
+fn find_event_by_seid(events: Vec<CalendarEvent>, seid: &str) -> Option<CalendarEvent> {
+    events.into_iter().find(|event| {
+        let url = format!("https://example.invalid/?{}", event.id);
+        extract_query_parameter(&url, "sEID").as_deref() == Some(seid)
+    })
+}
+
 fn extract_numeric_seid(id: &str) -> Option<u64> {
     let url = format!("https://example.invalid/?{id}");
     extract_query_parameter(&url, "sEID")?.parse::<u64>().ok()
+}
+
+fn parse_composite_event_id(id: &str) -> Result<ScheduleViewIdentity> {
+    let url = format!("https://example.invalid/?{id}");
+    Ok(ScheduleViewIdentity {
+        uid: required_query_parameter(&url, "UID")?,
+        gid: required_query_parameter(&url, "GID")?,
+        date: required_query_parameter(&url, "Date")?,
+        bdate: required_query_parameter(&url, "BDate")?,
+        seid: required_query_parameter(&url, "sEID")?,
+    })
 }
 
 fn parse_schedule_index_events(
@@ -1736,5 +2033,113 @@ mod tests {
         };
 
         validate_supported_add_input(&input).expect("should allow");
+    }
+
+    #[test]
+    fn parses_composite_event_identity() {
+        let identity = parse_composite_event_id(
+            "sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5",
+        )
+        .expect("identity");
+
+        assert_eq!(identity.seid, "3096804");
+        assert_eq!(identity.uid, "379");
+        assert_eq!(identity.gid, "183");
+        assert_eq!(identity.date, "da.2099.1.7");
+        assert_eq!(identity.bdate, "da.2099.1.5");
+    }
+
+    #[test]
+    fn parses_schedule_modify_form_into_event() {
+        let fields = vec![
+            ("SetDate.Year".to_string(), "2099".to_string()),
+            ("SetDate.Month".to_string(), "1".to_string()),
+            ("SetDate.Day".to_string(), "7".to_string()),
+            ("SetTime.Hour".to_string(), "9".to_string()),
+            ("SetTime.Minute".to_string(), "00".to_string()),
+            ("EndTime.Hour".to_string(), "11".to_string()),
+            ("EndTime.Minute".to_string(), "00".to_string()),
+            (
+                "Detail".to_string(),
+                "[cbzcal] friendly time probe 20260309".to_string(),
+            ),
+            ("Memo".to_string(), "friendly timed add".to_string()),
+        ];
+        let identity = ScheduleViewIdentity {
+            uid: "379".to_string(),
+            gid: "183".to_string(),
+            date: "da.2099.1.7".to_string(),
+            bdate: "da.2099.1.5".to_string(),
+            seid: "3096804".to_string(),
+        };
+
+        let event = parse_schedule_modify_event(&fields, &identity).expect("event");
+
+        assert_eq!(
+            event.id,
+            "sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5"
+        );
+        assert_eq!(event.title, "[cbzcal] friendly time probe 20260309");
+        assert_eq!(event.description.as_deref(), Some("friendly timed add"));
+        assert_eq!(
+            event.starts_at,
+            DateTime::parse_from_rfc3339("2099-01-07T09:00:00+09:00").expect("timestamp")
+        );
+        assert_eq!(
+            event.ends_at,
+            DateTime::parse_from_rfc3339("2099-01-07T11:00:00+09:00").expect("timestamp")
+        );
+    }
+
+    #[test]
+    fn populates_schedule_modify_form_for_single_day_event() {
+        let mut fields = vec![
+            ("page".to_string(), "ScheduleModify".to_string()),
+            ("sEID".to_string(), "3096804".to_string()),
+            ("UID".to_string(), "379".to_string()),
+            ("GID".to_string(), "183".to_string()),
+            ("Date".to_string(), "da.2099.1.7".to_string()),
+            ("BDate".to_string(), "da.2099.1.5".to_string()),
+            ("SetDate.Year".to_string(), "2099".to_string()),
+            ("SetDate.Month".to_string(), "1".to_string()),
+            ("SetDate.Day".to_string(), "7".to_string()),
+            ("SetTime.Hour".to_string(), "9".to_string()),
+            ("SetTime.Minute".to_string(), "00".to_string()),
+            ("EndTime.Hour".to_string(), "11".to_string()),
+            ("EndTime.Minute".to_string(), "00".to_string()),
+            ("Detail".to_string(), "old".to_string()),
+            ("Memo".to_string(), "old memo".to_string()),
+        ];
+        let event = CalendarEvent {
+            id: "sEID=3096804&UID=379&GID=183&Date=da.2099.1.8&BDate=da.2099.1.5".to_string(),
+            title: "updated title".to_string(),
+            description: Some("updated memo".to_string()),
+            starts_at: DateTime::parse_from_rfc3339("2099-01-08T13:30:00+09:00")
+                .expect("timestamp"),
+            ends_at: DateTime::parse_from_rfc3339("2099-01-08T15:00:00+09:00").expect("timestamp"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            version: 2,
+        };
+        let identity = ScheduleViewIdentity {
+            uid: "379".to_string(),
+            gid: "183".to_string(),
+            date: "da.2099.1.7".to_string(),
+            bdate: "da.2099.1.5".to_string(),
+            seid: "3096804".to_string(),
+        };
+
+        populate_schedule_modify_form(&mut fields, &event, &identity);
+
+        assert!(fields.contains(&(String::from("Date"), String::from("da.2099.1.8"))));
+        assert!(fields.contains(&(String::from("BDate"), String::from("da.2099.1.5"))));
+        assert!(fields.contains(&(String::from("SetTime.Hour"), String::from("13"))));
+        assert!(fields.contains(&(String::from("SetTime.Minute"), String::from("30"))));
+        assert!(fields.contains(&(String::from("EndTime.Hour"), String::from("15"))));
+        assert!(fields.contains(&(String::from("EndTime.Minute"), String::from("00"))));
+        assert!(fields.contains(&(String::from("Detail"), String::from("updated title"))));
+        assert!(fields.contains(&(String::from("Memo"), String::from("updated memo"))));
+        assert!(fields.contains(&(String::from("Modify"), String::from("変更する"))));
     }
 }

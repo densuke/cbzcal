@@ -187,7 +187,7 @@ impl AppConfig {
 
                 checks.push(DoctorCheck::warn(
                     "html-contract",
-                    "cybozu-html バックエンドは `events list` と単日通常予定の `events add` まで確認済みです。`events update` / `events clone` / `events delete` と add の拡張は未実装です。".to_string(),
+                    "cybozu-html バックエンドは `events list` と単日通常予定の `events add` / `events update` まで確認済みです。`events clone` / `events delete` と add/update の拡張は未実装です。".to_string(),
                 ));
 
                 next_steps.push(
@@ -198,7 +198,7 @@ impl AppConfig {
                         .to_string(),
                 );
                 next_steps.push(
-                    "採取結果をもとに src/backend/cybozu_html.rs の update/clone/delete と add 拡張を埋める".to_string(),
+                    "採取結果をもとに src/backend/cybozu_html.rs の clone/delete と add/update 拡張を埋める".to_string(),
                 );
             }
         }

@@ -62,8 +62,8 @@ flowchart TD
 3. `events clone`
 4. `events delete`
 
-2026-03-09 時点で、1 の `events add` は通常予定の単日登録まで実サイト確認済みです。  
-残りは参加者追加・設備予約・複数日予定を含む add の拡張と、update/clone/delete です。
+2026-03-09 時点で、1 の `events add` と 2 の `events update` は通常予定の単日操作まで実サイト確認済みです。  
+残りは参加者追加・設備予約・複数日予定を含む add/update の拡張と、clone/delete です。
 
 各操作ごとに次を揃えます。
 

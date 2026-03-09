@@ -641,7 +641,8 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `ScheduleRegularEntry?mode=reuse` の hidden 項目を採る
 - 実登録後に `list -> view -> modify -> delete` の往復で `sEID` と hidden の整合性を確認する
 - `events add` で未対応の参加者追加、設備予約、複数日予定の分岐を採る
-- `events update` / `events clone` / `events delete` のフォーム送信を実装する
+- `events update` で未対応の参加者変更、設備変更、繰り返し予定変更の分岐を採る
+- `events clone` / `events delete` のフォーム送信を実装する
 - `空き時間を確認する` や参加者検索時の補助リクエストを、必要なら別途採る
 
 ### 17. `events add` 実装メモ
@@ -684,3 +685,28 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `attendees`, `facility`, `calendar` は未対応
 - 秒を含む時刻は未対応で、分単位前提
 - 返り値の `description` は送信値を返すが、一覧 HTML からはまだ再抽出していない
+
+### 18. `events update` 実装メモ
+
+2026-03-09 時点で、`.cbzcal.toml` の `cybozu-html` 設定を使い、ヘッドレスで `events update` を実サイトに対して実行できるところまで確認しました。
+
+現時点の実装範囲:
+
+- 対応画面は `ScheduleModify`
+- `id` は `sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合 ID をそのまま使う
+- `ScheduleModify` form を実取得し、現在値を `CalendarEvent` に復元したうえで patch を適用する
+- `title`, `description`, `start`, `end` のみ更新対象にし、それ以外は未対応として弾く
+- 送信後は対象週の `ScheduleIndex` を再取得し、同じ `sEID` で更新後の予定を引き直す
+
+実サイト確認結果:
+
+- `sEID=3096804` の将来日テスト予定を 2099-01-07 13:00-14:30 JST に更新できた
+- 更新後の title は `[cbzcal] updated probe 20260309`
+- 直後の `events list --from 2099-01-07 --for 1d` で同一 `sEID` を再取得できた
+
+現時点の制約:
+
+- 単日・通常予定のみ
+- `attendees`, `facility`, `calendar` の更新は未対応
+- 繰り返し予定は `ScheduleRegularModify` 系のため未対応
+- `events list` は description をまだ再抽出しないので、更新後一覧では `description` が `null` のまま

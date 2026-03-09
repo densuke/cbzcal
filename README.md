@@ -6,8 +6,8 @@
 ## 現状
 
 - `fixture` バックエンドでは、予定の一覧取得・追加・更新・複製・削除をローカル JSON に対して実行できます。
-- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` まで実サイトで確認済みです。
-- `cybozu-html` の実サイト向け `events update` / `events clone` / `events delete` は未実装です。対象サイトの HTML/フォーム契約を採取してから実装を進める前提です。
+- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` / `events update` まで実サイトで確認済みです。
+- `cybozu-html` の実サイト向け `events clone` / `events delete` は未実装です。対象サイトの HTML/フォーム契約を採取してから実装を進める前提です。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
@@ -108,6 +108,19 @@ cargo run -- events add \
 ```
 
 `cybozu-html` の `events add` は現時点で通常予定の単日登録のみ対応です。`--attendee`、`--facility`、`--calendar`、日付またぎ予定はまだ扱えません。
+
+予定を更新します。
+
+```bash
+cargo run -- events update \
+  --id 'sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5' \
+  --title "更新後のタイトル" \
+  --start 2099-01-07T13:00:00+09:00 \
+  --end 2099-01-07T14:30:00+09:00 \
+  --description "更新後メモ"
+```
+
+`cybozu-html` の `events update` は現時点で通常予定の単日更新のみ対応です。更新できるのは `title` / `description` / `start` / `end` だけで、`--attendee`、`--facility`、`--calendar`、繰り返し予定はまだ扱えません。
 
 明示的に別ファイルを使いたい場合は `--config /path/to/config.toml` を指定します。  
 対応形式は `.yml`、`.yaml`、`.toml` です。
