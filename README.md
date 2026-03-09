@@ -8,6 +8,7 @@
 - `fixture` バックエンドでは、予定の一覧取得・追加・更新・複製・削除をローカル JSON に対して実行できます。
 - `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list`、通常予定の `events add` / `events clone`、通常予定と繰り返し予定の `events update` / `events delete` まで実サイトで確認済みです。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
+- `events --prompt "..."` で自然文から `list` / `add` / `update` / `clone` / `delete` の引数生成を試せます。既定では必ず確認し、`--yes` は `list` / `add` / `clone` のみ省略可能です。
 - `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は `XDG_STATE_HOME/cbzcal/session-cookies.json`、未設定時は `~/.local/state/cbzcal/session-cookies.json` です。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
@@ -63,6 +64,18 @@ cargo run -- events list --json
 
 ```bash
 cargo run -- -v events list --date today
+```
+
+自然文から引数を組み立てたい場合は `--prompt` を使います。実行前に解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。
+
+```bash
+cargo run -- events --prompt "明日の15時から1時間、『伊藤様と打ち合わせ』で追加"
+```
+
+`--yes` を付けると確認を省略できますが、これは `list` / `add` / `clone` の prompt 実行だけで有効です。`update` / `delete` では常に確認が必要です。
+
+```bash
+cargo run -- events --prompt "明日の予定を表示" --yes
 ```
 
 期間を明示したい場合は `--from` / `--to` を付けます。未指定時は JST 当日 00:00 から 1 週間です。
@@ -179,6 +192,14 @@ cargo run -- events delete \
 
 一時的に認証情報を直書きしたい場合は、`.cbzcal.toml` または `.cbzcal.yml` に `basic_username` / `basic_password` と `office_username` / `office_password` を置けます。  
 ただし平文資格情報は `0400` / `0600` 前提で、環境変数設定がある場合は環境変数が優先されます。
+
+`--prompt` でローカル LLM を使う場合は、必要に応じて設定ファイルに `ollama` セクションを追加します。未指定時は `http://127.0.0.1:11434` と `gemma3:4b` を使います。
+
+```toml
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "gemma3:4b"
+```
 
 ## テスト
 

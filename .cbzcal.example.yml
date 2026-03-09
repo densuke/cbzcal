@@ -17,3 +17,7 @@ cybozu-html:
   # office_username: temporary-office-user
   # office_password: temporary-office-pass
   user_agent: cbzcal/0.1.0
+
+ollama:
+  base_url: http://127.0.0.1:11434
+  model: gemma3:4b

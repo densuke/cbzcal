@@ -1,14 +1,16 @@
+use std::io::{self, Write};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Result, bail};
-use chrono::{Datelike, Timelike};
+use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone, Timelike};
 use serde::Serialize;
 
 use crate::{
-    backend::{ApplyScope, CybozuHtmlBackend, ListQuery, build_backend},
-    cli::{ApplyScopeArg, Cli, Command, EventsCommand},
+    backend::{ApplyScope, CalendarBackend, CybozuHtmlBackend, ListQuery, build_backend},
+    cli::{ApplyScopeArg, Cli, Command, EventsCommand, ResolvedEventsArgs},
     config::AppConfig,
     model::CalendarEvent,
+    prompt::{apply_scope_from_arg, plan_prompt, render_preview},
 };
 
 #[derive(Debug, Serialize)]
@@ -40,61 +42,107 @@ pub fn execute(cli: Cli) -> Result<String> {
         }
         Command::Events(events) => {
             let mut backend = build_backend(&loaded.config)?;
-            let output = match events.command_or_default() {
-                EventsCommand::List(args) => {
-                    let query: ListQuery = args.query()?;
-                    let events = backend.list_events(query.with_default_window())?;
-                    if args.json {
-                        render_json(&EventEnvelope {
-                            backend: backend.name(),
-                            data: render_events(&events),
-                        })
-                    } else {
-                        render_event_list(&events)
-                    }
-                }
-                EventsCommand::Add(args) => {
-                    let event = backend.add_event(args.new_event()?)?;
-                    render_event_result("追加しました", backend.name(), &event, args.json)
-                }
-                EventsCommand::Update(args) => {
-                    let patch = args.patch()?;
-                    let scope = args.scope.map(into_apply_scope);
-                    if patch.is_empty() && !args.web {
+            let output = match events.resolve()? {
+                ResolvedEventsArgs::Prompt(prompt) => {
+                    let existing_event = extract_short_id_hint(&prompt.prompt)
+                        .map(|id| find_event_by_id(backend.as_mut(), &id))
+                        .transpose()?;
+                    let execution = plan_prompt(
+                        &loaded.config,
+                        &prompt.prompt,
+                        None,
+                        existing_event.as_ref(),
+                    )?;
+                    if prompt.yes && !execution.supports_yes() {
                         bail!(
-                            "更新対象がありません。少なくとも 1 つの変更オプションを指定するか `--web` を付けてください"
+                            "`--yes` は prompt モードの list/add/clone でのみ使えます。update/delete では確認が必須です"
                         );
                     }
-                    if patch.is_empty() {
-                        let url = backend.event_web_url(&args.id)?;
-                        open_in_browser(&url)?;
-                        Ok(format!("ブラウザで開きました\n  {url}"))
-                    } else {
-                        let event = backend.update_event(&args.id, patch, scope)?;
-                        if args.web {
-                            let url = backend.event_web_url(&event.id)?;
-                            open_in_browser(&url)?;
-                        }
-                        render_event_result("更新しました", backend.name(), &event, args.json)
+                    let preview = render_preview(&execution);
+                    println!("{preview}");
+                    if !prompt.yes && !confirm_execution()? {
+                        emit_verbose_notices(verbose, backend.drain_notices());
+                        return Ok("キャンセルしました".to_string());
                     }
+
+                    execute_events_command(backend.as_mut(), execution.command)?
                 }
-                EventsCommand::Clone(args) => {
-                    let overrides = args.overrides()?;
-                    let event = backend.clone_event(&args.id, overrides)?;
-                    render_event_result("複製しました", backend.name(), &event, args.json)
+                ResolvedEventsArgs::Command(command) => {
+                    execute_events_command(backend.as_mut(), command)?
                 }
-                EventsCommand::Delete(args) => {
-                    if args.id.is_empty() {
-                        bail!("削除対象の ID が空です");
-                    }
-                    let event = backend.delete_event(&args.id, args.scope.map(into_apply_scope))?;
-                    render_event_result("削除しました", backend.name(), &event, args.json)
-                }
-            }?;
+            };
             emit_verbose_notices(verbose, backend.drain_notices());
             Ok(output)
         }
     }
+}
+
+fn execute_events_command(
+    backend: &mut dyn CalendarBackend,
+    command: EventsCommand,
+) -> Result<String> {
+    match command {
+        EventsCommand::List(args) => {
+            let query: ListQuery = args.query()?;
+            let events = backend.list_events(query.with_default_window())?;
+            if args.json {
+                render_json(&EventEnvelope {
+                    backend: backend.name(),
+                    data: render_events(&events),
+                })
+            } else {
+                render_event_list(&events)
+            }
+        }
+        EventsCommand::Add(args) => {
+            let event = backend.add_event(args.new_event()?)?;
+            render_event_result("追加しました", backend.name(), &event, args.json)
+        }
+        EventsCommand::Update(args) => {
+            let patch = args.patch()?;
+            let scope = args.scope.map(into_apply_scope);
+            if patch.is_empty() && !args.web {
+                bail!(
+                    "更新対象がありません。少なくとも 1 つの変更オプションを指定するか `--web` を付けてください"
+                );
+            }
+            if patch.is_empty() {
+                let url = backend.event_web_url(&args.id)?;
+                open_in_browser(&url)?;
+                Ok(format!("ブラウザで開きました\n  {url}"))
+            } else {
+                let event = backend.update_event(&args.id, patch, scope)?;
+                if args.web {
+                    let url = backend.event_web_url(&event.id)?;
+                    open_in_browser(&url)?;
+                }
+                render_event_result("更新しました", backend.name(), &event, args.json)
+            }
+        }
+        EventsCommand::Clone(args) => {
+            let overrides = args.overrides()?;
+            let event = backend.clone_event(&args.id, overrides)?;
+            render_event_result("複製しました", backend.name(), &event, args.json)
+        }
+        EventsCommand::Delete(args) => {
+            if args.id.is_empty() {
+                bail!("削除対象の ID が空です");
+            }
+            let event = backend.delete_event(&args.id, args.scope.map(into_apply_scope))?;
+            render_event_result("削除しました", backend.name(), &event, args.json)
+        }
+    }
+}
+
+fn confirm_execution() -> Result<bool> {
+    print!("実行しますか? [y/N] ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    Ok(matches!(
+        input.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
 }
 
 fn render_json<T: Serialize>(value: &T) -> Result<String> {
@@ -111,11 +159,7 @@ fn emit_verbose_notices(verbose: u8, notices: Vec<String>) {
 }
 
 fn into_apply_scope(scope: ApplyScopeArg) -> ApplyScope {
-    match scope {
-        ApplyScopeArg::This => ApplyScope::This,
-        ApplyScopeArg::After => ApplyScope::After,
-        ApplyScopeArg::All => ApplyScope::All,
-    }
+    apply_scope_from_arg(Some(scope)).expect("scope")
 }
 
 fn open_in_browser(url: &str) -> Result<()> {
@@ -290,9 +334,62 @@ fn weekday_abbr(weekday: chrono::Weekday) -> &'static str {
     }
 }
 
+fn extract_short_id_hint(prompt: &str) -> Option<String> {
+    prompt
+        .split_whitespace()
+        .find(|token| token.contains('@'))
+        .map(|token| {
+            token
+                .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '「' | '」' | '。' | '、'))
+                .to_string()
+        })
+}
+
+fn find_event_by_id(backend: &mut dyn CalendarBackend, id: &str) -> Result<CalendarEvent> {
+    let date = extract_date_from_event_identifier(id)
+        .ok_or_else(|| anyhow::anyhow!("ID から日付を解決できませんでした: {id}"))?;
+    let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+    let from = jst
+        .with_ymd_and_hms(date.year(), date.month(), date.day(), 0, 0, 0)
+        .single()
+        .expect("start of day");
+    let to = from + chrono::TimeDelta::days(1);
+    let events = backend.list_events(ListQuery {
+        from: Some(from),
+        to: Some(to),
+    })?;
+    events
+        .into_iter()
+        .find(|event| event.id == id || event.short_id() == id)
+        .ok_or_else(|| anyhow::anyhow!("対象予定が見つかりませんでした: {id}"))
+}
+
+fn extract_date_from_event_identifier(id: &str) -> Option<NaiveDate> {
+    if let Some((_, date)) = id.split_once('@') {
+        return NaiveDate::parse_from_str(date, "%Y-%m-%d").ok();
+    }
+
+    let url = reqwest::Url::parse(&format!("https://example.invalid/?{id}")).ok()?;
+    for (key, value) in url.query_pairs() {
+        if key == "Date" {
+            return parse_da_date(&value);
+        }
+    }
+    None
+}
+
+fn parse_da_date(value: &str) -> Option<NaiveDate> {
+    let value = value.strip_prefix("da.")?;
+    let mut parts = value.split('.');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<u32>().ok()?;
+    let day = parts.next()?.parse::<u32>().ok()?;
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
 #[cfg(test)]
 mod tests {
-    use chrono::{FixedOffset, TimeZone};
+    use chrono::{FixedOffset, NaiveDate, TimeZone};
 
     use super::*;
 
@@ -369,6 +466,14 @@ mod tests {
         assert_eq!(
             rendered,
             "追加しました\n  2026-03-09 (Mon)\n  13:30-14:30  サンプル設定 [3096840@2026-03-09]"
+        );
+    }
+
+    #[test]
+    fn extracts_date_from_short_id() {
+        assert_eq!(
+            extract_date_from_event_identifier("3096840@2026-03-09"),
+            Some(NaiveDate::from_ymd_opt(2026, 3, 9).expect("date"))
         );
     }
 }

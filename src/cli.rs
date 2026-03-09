@@ -45,6 +45,19 @@ pub enum Command {
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 pub struct EventsArgs {
+    #[arg(
+        short = 'p',
+        long = "prompt",
+        help = "自然文から events の実行内容を組み立てる。実行前に必ず確認する"
+    )]
+    pub prompt: Option<String>,
+    #[arg(
+        short = 'y',
+        long = "yes",
+        requires = "prompt",
+        help = "確認を省略して実行する。prompt モードの add/list/clone でのみ有効"
+    )]
+    pub yes: bool,
     #[command(subcommand)]
     pub command: Option<EventsCommand>,
     #[command(flatten)]
@@ -52,9 +65,33 @@ pub struct EventsArgs {
 }
 
 impl EventsArgs {
-    pub fn command_or_default(self) -> EventsCommand {
-        self.command.unwrap_or(EventsCommand::List(self.list))
+    pub fn resolve(self) -> Result<ResolvedEventsArgs> {
+        if let Some(prompt) = self.prompt {
+            if self.command.is_some() || !self.list.is_empty() {
+                bail!("`--prompt` は通常の subcommand や list オプションと同時に使えません");
+            }
+            return Ok(ResolvedEventsArgs::Prompt(PromptArgs {
+                prompt,
+                yes: self.yes,
+            }));
+        }
+
+        Ok(ResolvedEventsArgs::Command(
+            self.command.unwrap_or(EventsCommand::List(self.list)),
+        ))
     }
+}
+
+#[derive(Debug)]
+pub enum ResolvedEventsArgs {
+    Command(EventsCommand),
+    Prompt(PromptArgs),
+}
+
+#[derive(Debug)]
+pub struct PromptArgs {
+    pub prompt: String,
+    pub yes: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -103,6 +140,14 @@ impl ListArgs {
 
     fn query_from(&self, anchor: NaiveDate) -> Result<ListQuery> {
         resolve_list_query(self, anchor).map_err(|error| anyhow::anyhow!(error))
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.json
+            && self.from.is_none()
+            && self.to.is_none()
+            && self.date.is_none()
+            && self.duration.is_none()
     }
 }
 
@@ -393,7 +438,7 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
     Ok(event)
 }
 
-fn parse_flexible_datetime(
+pub(crate) fn parse_flexible_datetime(
     input: &str,
     anchor: NaiveDate,
 ) -> Result<DateTime<FixedOffset>, String> {
@@ -403,7 +448,7 @@ fn parse_flexible_datetime(
     })
 }
 
-fn parse_flexible_date(input: &str, anchor: NaiveDate) -> Result<NaiveDate, String> {
+pub(crate) fn parse_flexible_date(input: &str, anchor: NaiveDate) -> Result<NaiveDate, String> {
     let normalized = input.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "today" => return Ok(anchor),
@@ -465,7 +510,7 @@ fn parse_month_day(input: &str, year: i32) -> Result<NaiveDate, chrono::ParseErr
     NaiveDate::parse_from_str(&format!("{year}/{input}"), "%Y/%m/%d")
 }
 
-fn parse_time_of_day(input: &str) -> Result<(u32, u32), String> {
+pub(crate) fn parse_time_of_day(input: &str) -> Result<(u32, u32), String> {
     let normalized = input.trim();
     if let Some((hour, minute)) = normalized.split_once(':') {
         let hour = hour
@@ -489,7 +534,7 @@ fn parse_time_of_day(input: &str) -> Result<(u32, u32), String> {
     Ok((hour, 0))
 }
 
-fn parse_duration(input: &str) -> Result<TimeDelta, String> {
+pub(crate) fn parse_duration(input: &str) -> Result<TimeDelta, String> {
     let value = input.trim().to_ascii_lowercase();
     if value.is_empty() {
         return Err("期間が空です".to_string());
@@ -529,7 +574,7 @@ fn parse_duration(input: &str) -> Result<TimeDelta, String> {
     Ok(total)
 }
 
-fn to_jst_datetime(
+pub(crate) fn to_jst_datetime(
     date: NaiveDate,
     hour: u32,
     minute: u32,
@@ -545,7 +590,7 @@ fn next_date(date: NaiveDate) -> Result<NaiveDate, String> {
         .ok_or_else(|| "翌日を計算できません".to_string())
 }
 
-fn current_jst_date() -> NaiveDate {
+pub(crate) fn current_jst_date() -> NaiveDate {
     Utc::now().with_timezone(&jst_offset()).date_naive()
 }
 
@@ -553,7 +598,7 @@ fn jst_offset() -> FixedOffset {
     FixedOffset::east_opt(JST_OFFSET_SECONDS).expect("valid JST offset")
 }
 
-fn parse_timestamp(input: &str) -> Result<DateTime<FixedOffset>, String> {
+pub(crate) fn parse_timestamp(input: &str) -> Result<DateTime<FixedOffset>, String> {
     DateTime::parse_from_rfc3339(input)
         .map_err(|error| format!("RFC3339 形式の日時で指定してください: {error}"))
 }
@@ -725,5 +770,37 @@ mod tests {
         };
         assert!(events.command.is_none());
         assert_eq!(events.list.date.as_deref(), Some("today"));
+    }
+
+    #[test]
+    fn prompt_mode_uses_long_option_prompt() {
+        let cli =
+            Cli::try_parse_from(["cbzcal", "events", "--prompt", "明日の予定"]).expect("parse");
+        let Command::Events(events) = cli.command else {
+            panic!("events command");
+        };
+        let ResolvedEventsArgs::Prompt(prompt) = events.resolve().expect("resolve") else {
+            panic!("prompt mode");
+        };
+        assert_eq!(prompt.prompt, "明日の予定");
+        assert!(!prompt.yes);
+    }
+
+    #[test]
+    fn prompt_mode_rejects_list_filters() {
+        let cli = Cli::try_parse_from([
+            "cbzcal",
+            "events",
+            "--prompt",
+            "明日の予定",
+            "--date",
+            "today",
+        ])
+        .expect("parse");
+        let Command::Events(events) = cli.command else {
+            panic!("events command");
+        };
+        let error = events.resolve().expect_err("should fail");
+        assert!(error.to_string().contains("同時に使えません"));
     }
 }

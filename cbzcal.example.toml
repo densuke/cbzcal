@@ -29,3 +29,8 @@ office_password_env = "CBZCAL_OFFICE_PASS"
 # office_password = "temporary-office-pass"
 
 user_agent = "cbzcal/0.1.0"
+
+[ollama]
+# events --prompt の解釈に使うローカル ollama
+base_url = "http://127.0.0.1:11434"
+model = "gemma3:4b"

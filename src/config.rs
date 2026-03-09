@@ -32,6 +32,7 @@ pub struct AppConfig {
     pub fixture: Option<FixtureConfig>,
     #[serde(rename = "cybozu-html")]
     pub cybozu_html: Option<CybozuHtmlConfig>,
+    pub ollama: Option<OllamaConfig>,
 }
 
 #[derive(Debug)]
@@ -241,6 +242,22 @@ pub struct CybozuHtmlConfig {
     pub office_username: Option<String>,
     pub office_password: Option<String>,
     pub user_agent: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct OllamaConfig {
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+}
+
+impl OllamaConfig {
+    pub fn base_url(&self) -> &str {
+        self.base_url.as_deref().unwrap_or("http://127.0.0.1:11434")
+    }
+
+    pub fn model(&self) -> &str {
+        self.model.as_deref().unwrap_or("gemma3:4b")
+    }
 }
 
 impl CybozuHtmlConfig {
@@ -794,6 +811,7 @@ session_cache_path = "../state/cookies.json"
                 office_password: None,
                 user_agent: None,
             }),
+            ollama: None,
         };
 
         let report = config.doctor_report(Path::new("/tmp/cbzcal.toml"));
@@ -920,6 +938,7 @@ fixture:
                 office_password: Some("office-pass".to_string()),
                 user_agent: None,
             }),
+            ollama: None,
         };
 
         let report = config.doctor_report(Path::new("/tmp/.cbzcal.toml"));

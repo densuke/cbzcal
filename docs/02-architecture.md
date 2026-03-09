@@ -11,7 +11,9 @@
 flowchart LR
     CLI[CLI / clap] --> APP[app::execute]
     APP --> CFG[config::AppConfig]
+    APP --> PROMPT[prompt::plan_prompt]
     APP --> BE[backend::CalendarBackend]
+    PROMPT --> OLLAMA[Ollama JSON plan]
     BE --> FIX[fixture backend]
     BE --> CYB[cybozu-html backend]
     FIX --> JSON[fixture JSON]
@@ -25,7 +27,15 @@ flowchart LR
 - コマンドライン引数の定義
 - 日時パース
 - `events` の既定を `list` に寄せる導線
+- `events --prompt` の通常実行経路との排他制御
 - 更新・複製オプションの整合性チェック
+
+### `prompt`
+
+- Ollama への JSON 生成依頼
+- 自然文から `events list/add/update/clone/delete` への変換
+- 実行前プレビュー文字列の生成
+- `update/delete` では `--yes` を禁止する安全制御
 
 ### `model`
 
@@ -57,11 +67,13 @@ cbzcal events add
 cbzcal events update
 cbzcal events clone
 cbzcal events delete
+cbzcal events --prompt "明日の15時から1時間、打ち合わせで追加"
 ```
 
 `events` は subcommand 省略時に `list` として動きます。  
 通常出力は人間向けのテキストで、`--json` を付けたときだけ JSON を返します。  
 `-v` は認証経路やセッション再利用の補助情報を標準エラーに出します。
+`--prompt` は実行前に必ず解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。`--yes` は `list/add/clone` のみ省略可能で、`update/delete` では使えません。
 
 ## `cybozu-html` バックエンドの想定責務
 
