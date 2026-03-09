@@ -635,6 +635,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `id` は将来の更新/削除で必要な画面文脈を残すため、`sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合形式にしている
 - `calendar` は現在の HTML から安定して取れていないため `null` になる場合がある
 - CLI では出過ぎ防止のため、`events list` の `from` / `to` が両方未指定なら JST 当日 00:00 から 1 週間に制限する
+- 利用者向けには `short_id=sEID@YYYY-MM-DD` も併記し、`update` / `delete` / `clone` の対象指定はこれを優先する方針にする
 
 ### 16. 次に採るべきもの
 
@@ -734,3 +735,24 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - 通常予定の全体削除のみ
 - 複数参加者予定の `Member=single` には未対応
 - 繰り返し予定の `Apply=this|after|all` 分岐には未対応
+
+### 20. 短縮 ID 方針
+
+2026-03-09 時点で、CLI の出力には利用者向けの `short_id` を追加しました。
+
+- 形式は `sEID@YYYY-MM-DD`
+- 例: `3096817@2099-01-09`
+- `sEID` だけでは繰り返し予定や occurrence の区別に不足するため、対象日を含める
+- 内部では従来どおり `sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合 ID を保持する
+
+実装済みの扱い:
+
+- `events list` / `events add` / `events update` の JSON 出力に `short_id` を含める
+- `events update --id 3096817@2099-01-09` のように短縮 ID を直接受け付ける
+- `events delete --id 3096817@2099-01-09` も同様に受け付ける
+- 短縮 ID が渡された場合は、対象週の `ScheduleIndex` を headless で取得して正規 ID に解決する
+
+実サイト確認結果:
+
+- `3096817@2099-01-09` を使って `events update` を実行できた
+- 同じ `short_id` を使って `events delete` を実行できた

@@ -76,6 +76,8 @@ cargo run -- events list \
 `cybozu-html` では現時点で `description` / `attendees` / `facility` は一覧から未抽出です。  
 また、グループ週表示では共有予定が参加者ごとに重複して見えるため、CLI では `sEID + Date + BDate` 単位で 1 件に畳み、さらに現在ユーザーの `UID` 行だけを取得対象にしています。
 
+Cybozu 系イベントの出力には `short_id` を含めます。形式は `sEID@YYYY-MM-DD` で、`update` / `delete` / 今後の `clone` にそのまま渡せます。
+
 予定を追加します。
 
 ```bash
@@ -113,7 +115,7 @@ cargo run -- events add \
 
 ```bash
 cargo run -- events update \
-  --id 'sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5' \
+  --id '3096804@2099-01-07' \
   --title "更新後のタイトル" \
   --start 2099-01-07T13:00:00+09:00 \
   --end 2099-01-07T14:30:00+09:00 \
@@ -126,7 +128,7 @@ cargo run -- events update \
 
 ```bash
 cargo run -- events delete \
-  --id 'sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5'
+  --id '3096804@2099-01-07'
 ```
 
 `cybozu-html` の `events delete` は現時点で通常予定の全体削除のみ対応です。複数参加者予定の `self` 離脱や、繰り返し予定の `this|after|all` 分岐はまだ扱えません。

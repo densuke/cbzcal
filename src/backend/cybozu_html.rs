@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::{
     backend::{CalendarBackend, ListQuery},
     config::{CredentialPair, CredentialSource, CybozuHtmlConfig},
-    model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent},
+    model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent, short_id_from_event_id},
 };
 
 const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
@@ -68,6 +68,12 @@ struct ScheduleIndexContext {
 struct HtmlForm {
     action_url: String,
     fields: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShortEventReference {
+    seid: String,
+    date: NaiveDate,
 }
 
 #[derive(Debug, Serialize)]
@@ -876,8 +882,7 @@ impl CalendarBackend for CybozuHtmlBackend {
     fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent> {
         validate_supported_update_patch(&patch)?;
 
-        let identity = parse_composite_event_id(id)?;
-        let (basic_credentials, _) = self.bootstrap_authenticated_schedule_index()?;
+        let (basic_credentials, identity) = self.resolve_event_identity(id)?;
         let schedule_modify = self.fetch_schedule_modify(&basic_credentials, &identity)?;
         let mut form = parse_html_form(
             &schedule_modify.body,
@@ -927,8 +932,7 @@ impl CalendarBackend for CybozuHtmlBackend {
     }
 
     fn delete_event(&mut self, _id: &str) -> Result<()> {
-        let identity = parse_composite_event_id(_id)?;
-        let (basic_credentials, _) = self.bootstrap_authenticated_schedule_index()?;
+        let (basic_credentials, identity) = self.resolve_event_identity(_id)?;
         let schedule_delete = self.fetch_schedule_delete(&basic_credentials, &identity)?;
         let mut form = parse_html_form(
             &schedule_delete.body,
@@ -1129,6 +1133,55 @@ fn validate_supported_delete_form(fields: &[(String, String)]) -> Result<()> {
         Some("single") => bail!("現時点の `events delete` は参加者単位の削除に未対応です"),
         Some(value) => bail!("現時点の `events delete` は未対応の削除種別です: {value}"),
         None => bail!("削除フォームの Member が見つかりません"),
+    }
+}
+
+impl CybozuHtmlBackend {
+    fn resolve_event_identity(
+        &self,
+        id_or_short_id: &str,
+    ) -> Result<(Option<CredentialPair>, ScheduleViewIdentity)> {
+        let (basic_credentials, first_schedule_index) =
+            self.bootstrap_authenticated_schedule_index()?;
+        let identity = if id_or_short_id.contains('&') {
+            parse_composite_event_id(id_or_short_id)?
+        } else {
+            self.resolve_short_event_identity(
+                id_or_short_id,
+                &basic_credentials,
+                &first_schedule_index,
+            )?
+        };
+        Ok((basic_credentials, identity))
+    }
+
+    fn resolve_short_event_identity(
+        &self,
+        short_id: &str,
+        basic_credentials: &Option<CredentialPair>,
+        first_schedule_index: &ResponseSnapshot,
+    ) -> Result<ScheduleViewIdentity> {
+        let short = parse_short_event_reference(short_id)?;
+        let context = self.extract_schedule_index_context(first_schedule_index)?;
+        let target_week = week_start(short.date);
+        let default_week =
+            extract_schedule_anchor_date(&first_schedule_index.body, &first_schedule_index.url)
+                .unwrap_or_else(|| week_start(today_jst()));
+        let page = if target_week == default_week {
+            first_schedule_index.clone()
+        } else {
+            self.fetch_schedule_index(basic_credentials, Some(target_week), Some(&context.gid))?
+        };
+        let calendar_name = extract_calendar_name(&page.body);
+        let events = parse_schedule_index_events(
+            &page.body,
+            &page.url,
+            calendar_name.as_deref(),
+            Some(&context.current_user_uid),
+        )?;
+        let event = find_event_by_short_id(events, short_id)
+            .ok_or_else(|| anyhow::anyhow!("短縮 ID に対応する予定が見つかりません: {short_id}"))?;
+        parse_composite_event_id(&event.id)
     }
 }
 
@@ -1504,6 +1557,12 @@ fn find_event_by_seid(events: Vec<CalendarEvent>, seid: &str) -> Option<Calendar
     })
 }
 
+fn find_event_by_short_id(events: Vec<CalendarEvent>, short_id: &str) -> Option<CalendarEvent> {
+    events
+        .into_iter()
+        .find(|event| short_id_from_event_id(&event.id) == short_id)
+}
+
 fn extract_numeric_seid(id: &str) -> Option<u64> {
     let url = format!("https://example.invalid/?{id}");
     extract_query_parameter(&url, "sEID")?.parse::<u64>().ok()
@@ -1517,6 +1576,21 @@ fn parse_composite_event_id(id: &str) -> Result<ScheduleViewIdentity> {
         date: required_query_parameter(&url, "Date")?,
         bdate: required_query_parameter(&url, "BDate")?,
         seid: required_query_parameter(&url, "sEID")?,
+    })
+}
+
+fn parse_short_event_reference(input: &str) -> Result<ShortEventReference> {
+    let (seid, date) = input.split_once('@').ok_or_else(|| {
+        anyhow::anyhow!("短縮 ID は `sEID@YYYY-MM-DD` 形式で指定してください: {input}")
+    })?;
+    if seid.is_empty() {
+        bail!("短縮 ID の sEID が空です: {input}");
+    }
+    let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .with_context(|| format!("短縮 ID の日付を解釈できません: {input}"))?;
+    Ok(ShortEventReference {
+        seid: seid.to_string(),
+        date,
     })
 }
 
@@ -2149,6 +2223,51 @@ mod tests {
         assert_eq!(identity.gid, "183");
         assert_eq!(identity.date, "da.2099.1.7");
         assert_eq!(identity.bdate, "da.2099.1.5");
+    }
+
+    #[test]
+    fn parses_short_event_reference() {
+        let short = parse_short_event_reference("3096804@2099-01-07").expect("short");
+        assert_eq!(short.seid, "3096804");
+        assert_eq!(
+            short.date,
+            NaiveDate::from_ymd_opt(2099, 1, 7).expect("date")
+        );
+    }
+
+    #[test]
+    fn finds_event_by_short_id() {
+        let events = vec![
+            CalendarEvent {
+                id: "sEID=3096804&UID=379&GID=183&Date=da.2099.1.7&BDate=da.2099.1.5".to_string(),
+                title: "updated title".to_string(),
+                description: None,
+                starts_at: DateTime::parse_from_rfc3339("2099-01-07T13:00:00+09:00")
+                    .expect("timestamp"),
+                ends_at: DateTime::parse_from_rfc3339("2099-01-07T14:30:00+09:00")
+                    .expect("timestamp"),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                version: 1,
+            },
+            CalendarEvent {
+                id: "fixture-123".to_string(),
+                title: "fixture".to_string(),
+                description: None,
+                starts_at: DateTime::parse_from_rfc3339("2099-01-07T15:00:00+09:00")
+                    .expect("timestamp"),
+                ends_at: DateTime::parse_from_rfc3339("2099-01-07T16:00:00+09:00")
+                    .expect("timestamp"),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                version: 1,
+            },
+        ];
+
+        let found = find_event_by_short_id(events, "3096804@2099-01-07").expect("event");
+        assert_eq!(found.title, "updated title");
     }
 
     #[test]
