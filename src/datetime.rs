@@ -23,6 +23,10 @@ pub fn current_jst_midnight() -> DateTime<FixedOffset> {
         .expect("valid local midnight")
 }
 
+pub fn current_jst_now() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&jst_offset())
+}
+
 pub fn to_jst_datetime(date: NaiveDate, hour: u32, minute: u32) -> Result<DateTime<FixedOffset>> {
     jst_offset()
         .with_ymd_and_hms(date.year(), date.month(), date.day(), hour, minute, 0)

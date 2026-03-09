@@ -38,6 +38,7 @@ pub fn render_event_result(
     backend: &'static str,
     event: &CalendarEvent,
     json: bool,
+    now: Option<chrono::DateTime<chrono::FixedOffset>>,
 ) -> Result<String> {
     if json {
         render_json(&EventEnvelope {
@@ -48,12 +49,15 @@ pub fn render_event_result(
         let mut out = String::new();
         out.push_str(action);
         out.push('\n');
-        out.push_str(&render_single_event(event));
+        out.push_str(&render_single_event(event, now));
         Ok(out)
     }
 }
 
-pub fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
+pub fn render_event_list(
+    events: &[CalendarEvent],
+    now: Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> Result<String> {
     if events.is_empty() {
         return Ok("予定はありません".to_string());
     }
@@ -63,6 +67,8 @@ pub fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
 
     let mut out = String::new();
     let mut current_date = None;
+    let mut now_marker_shown = false;
+
     for event in sorted {
         let date = event.starts_at.date_naive();
         if current_date != Some(date) {
@@ -77,9 +83,25 @@ pub fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
                 weekday_abbr(date.weekday()),
             ));
             current_date = Some(date);
+            now_marker_shown = false; // Reset marker for each day
         }
 
-        out.push_str("  ");
+        // Show "Now" marker if we are at today and now is between previous event end and this event start
+        if let Some(now_val) = now {
+            if !now_marker_shown && date == now_val.date_naive() && now_val < event.starts_at {
+                out.push_str(&format!(
+                    "  --- 現在 ({:02}:{:02}) ---\n",
+                    now_val.time().hour(),
+                    now_val.time().minute()
+                ));
+                now_marker_shown = true;
+            }
+        }
+
+        let is_ongoing = now.map(|n| event.is_ongoing(n)).unwrap_or(false);
+        let prefix = if is_ongoing { "> " } else { "  " };
+
+        out.push_str(prefix);
         out.push_str(&format_event_time(event));
         out.push_str("  ");
         out.push_str(&event.title);
@@ -88,6 +110,32 @@ pub fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
         out.push_str(&event.short_id());
         out.push(']');
         out.push('\n');
+
+        // Show "Now" marker if ongoing
+        if is_ongoing && !now_marker_shown {
+            // If ongoing, the marker is effectively "inside" or "after" it. 
+            // We'll skip a separate "Now" line if it's already highlighted as ongoing.
+            now_marker_shown = true; 
+        }
+
+        // Show "Now" marker if just passed
+        if let Some(now_val) = now {
+            if !now_marker_shown && date == now_val.date_naive() && event.is_passed(now_val) {
+                // Check next event or end of day? 
+                // For simplicity, we'll check it in the next loop iteration or at the end of the day.
+            }
+        }
+    }
+
+    // Handle now marker if it's at the end of the day (all events passed)
+    if let Some(now_val) = now {
+        if !now_marker_shown && current_date == Some(now_val.date_naive()) {
+            out.push_str(&format!(
+                "  --- 現在 ({:02}:{:02}) ---\n",
+                now_val.time().hour(),
+                now_val.time().minute()
+            ));
+        }
     }
 
     if out.ends_with('\n') {
@@ -97,10 +145,26 @@ pub fn render_event_list(events: &[CalendarEvent]) -> Result<String> {
     Ok(out)
 }
 
-pub fn render_single_event(event: &CalendarEvent) -> String {
+pub fn render_single_event(
+    event: &CalendarEvent,
+    now: Option<chrono::DateTime<chrono::FixedOffset>>,
+) -> String {
     let date = event.starts_at.date_naive();
+    let is_ongoing = now.map(|n| event.is_ongoing(n)).unwrap_or(false);
+    let prefix = if is_ongoing { "> " } else { "  " };
+
     format!(
-        "  {:04}-{:02}-{:02} ({})\n  {}  {} [{}]",
+        "  {:04}-{:02}-{:02} ({})\n{}  {}  {} [{}]",
+        date.year(),
+        date.month(),
+        date.day(),
+        weekday_abbr(date.weekday()),
+        prefix,
+        format_event_time(event),
+        event.title,
+        event.short_id(),
+    )
+}-{:02}-{:02} ({})\n  {}  {} [{}]",
         date.year(),
         date.month(),
         date.day(),
@@ -193,10 +257,63 @@ mod tests {
             },
         ];
 
-        let rendered = render_event_list(&events).expect("render");
+        let rendered = render_event_list(&events, None).expect("render");
         assert_eq!(
             rendered,
             "2026-03-09 (Mon)\n  13:30-14:30  サンプル設定 [3096840@2026-03-09]\n\n2026-03-10 (Tue)\n  終日  休み [3096808@2026-03-10]"
         );
+    }
+
+    #[test]
+    fn renders_now_marker_and_highlight() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+        let now = jst.with_ymd_and_hms(2026, 3, 9, 14, 0, 0).single().expect("now");
+        let events = vec![
+            CalendarEvent {
+                id: "e1@2026-03-09".to_string(),
+                title: "前".to_string(),
+                description: None,
+                starts_at: jst.with_ymd_and_hms(2026, 3, 9, 9, 0, 0).single().unwrap(),
+                ends_at: jst.with_ymd_and_hms(2026, 3, 9, 10, 0, 0).single().unwrap(),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                visibility: EventVisibility::Public,
+                version: 1,
+            },
+            CalendarEvent {
+                id: "e2@2026-03-09".to_string(),
+                title: "今".to_string(),
+                description: None,
+                starts_at: jst.with_ymd_and_hms(2026, 3, 9, 13, 30, 0).single().unwrap(),
+                ends_at: jst.with_ymd_and_hms(2026, 3, 9, 14, 30, 0).single().unwrap(),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                visibility: EventVisibility::Public,
+                version: 1,
+            },
+            CalendarEvent {
+                id: "e3@2026-03-09".to_string(),
+                title: "後".to_string(),
+                description: None,
+                starts_at: jst.with_ymd_and_hms(2026, 3, 9, 16, 0, 0).single().unwrap(),
+                ends_at: jst.with_ymd_and_hms(2026, 3, 9, 17, 0, 0).single().unwrap(),
+                attendees: Vec::new(),
+                facility: None,
+                calendar: None,
+                visibility: EventVisibility::Public,
+                version: 1,
+            },
+        ];
+
+        let rendered = render_event_list(&events, Some(now)).expect("render");
+        // Marker should be merged if ongoing event exists
+        assert!(rendered.contains("> 13:30-14:30  今 [e2@2026-03-09]"));
+        
+        // Let's test marker between events
+        let now_between = jst.with_ymd_and_hms(2026, 3, 9, 11, 0, 0).single().expect("now");
+        let rendered_between = render_event_list(&events, Some(now_between)).expect("render");
+        assert!(rendered_between.contains("--- 現在 (11:00) ---"));
     }
 }

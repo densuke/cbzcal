@@ -125,6 +125,14 @@ impl CalendarEvent {
         };
         start_ok && end_ok
     }
+
+    pub fn is_ongoing(&self, now: DateTime<FixedOffset>) -> bool {
+        self.starts_at <= now && now < self.ends_at
+    }
+
+    pub fn is_passed(&self, now: DateTime<FixedOffset>) -> bool {
+        self.ends_at <= now
+    }
 }
 
 #[derive(Debug, Clone)]
