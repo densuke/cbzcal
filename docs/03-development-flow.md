@@ -63,6 +63,7 @@ flowchart TD
 4. `events delete`
 
 2026-03-09 時点で、1 の `events add`、2 の `events update`、3 の `events clone`、4 の `events delete` は通常予定の単日操作まで実サイト確認済みです。  
+`events add` は `--public` / `--private` による公開方法の切り替えにも対応しました。  
 `events update` / `events delete` は繰り返し予定の `--scope this|after|all` にも対応しました。  
 残りは参加者追加・設備予約・複数日予定を含む add/update/clone の拡張と、clone の繰り返し予定対応です。
 

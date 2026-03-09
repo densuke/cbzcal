@@ -672,8 +672,16 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 - `EndTime.Minute`
 - `Detail`
 - `Memo`
+- `Private`
 - `sUID`
 - `Entry=登録する`
+
+公開方法の実画面観測:
+
+- 項目見出しは `予定の公開`
+- radio name は `Private`
+- `value=""` が `公開`
+- `value="1"` が `非公開`
 
 実サイト確認結果:
 

@@ -94,6 +94,7 @@ impl CalendarBackend for FixtureBackend {
             attendees: input.attendees,
             facility: input.facility,
             calendar: input.calendar,
+            visibility: input.visibility,
             version: 1,
         };
 
@@ -161,6 +162,7 @@ mod tests {
                 attendees: vec!["alice".to_string(), "bob".to_string()],
                 facility: Some("会議室A".to_string()),
                 calendar: Some("開発".to_string()),
+                visibility: crate::model::EventVisibility::Public,
             })
             .expect("add");
 

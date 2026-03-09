@@ -392,6 +392,7 @@ mod tests {
     use chrono::{FixedOffset, NaiveDate, TimeZone};
 
     use super::*;
+    use crate::model::EventVisibility;
 
     #[test]
     fn renders_human_readable_event_list() {
@@ -412,6 +413,7 @@ mod tests {
                 attendees: Vec::new(),
                 facility: None,
                 calendar: None,
+                visibility: EventVisibility::Public,
                 version: 1,
             },
             CalendarEvent {
@@ -429,6 +431,7 @@ mod tests {
                 attendees: Vec::new(),
                 facility: None,
                 calendar: None,
+                visibility: EventVisibility::Public,
                 version: 1,
             },
         ];
@@ -458,6 +461,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
             version: 1,
         };
 

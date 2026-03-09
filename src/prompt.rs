@@ -11,7 +11,7 @@ use crate::{
         to_jst_datetime,
     },
     config::{AppConfig, OllamaConfig},
-    model::CalendarEvent,
+    model::{CalendarEvent, EventVisibility},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +59,7 @@ struct PromptPlan {
     clear_description: Option<bool>,
     start: Option<String>,
     end: Option<String>,
+    visibility: Option<String>,
     scope: Option<String>,
     web: Option<bool>,
     preserve_time: Option<bool>,
@@ -96,7 +97,10 @@ pub fn plan_prompt(
     let anchor = anchor.unwrap_or_else(current_jst_date);
     let ollama = config.ollama.clone().unwrap_or_default();
     let raw = request_plan_from_ollama(&ollama, prompt, anchor)?;
-    let plan = parse_prompt_plan(&raw)?;
+    let mut plan = parse_prompt_plan(&raw)?;
+    if plan.visibility.is_none() {
+        plan.visibility = infer_visibility_from_prompt(prompt);
+    }
     build_execution(plan, anchor, existing_event)
 }
 
@@ -154,12 +158,13 @@ fn build_system_prompt(user_prompt: &str, anchor: NaiveDate) -> String {
             "Return JSON only. No markdown. No explanation.\n",
             "Today in JST is {anchor}.\n",
             "Allowed action values: list, add, update, clone, delete.\n",
-            "Use these keys when needed: action, id, title, title_suffix, date, from, to, at, until, for, all_day, description, clear_description, start, end, scope, web, preserve_time.\n",
+            "Use these keys when needed: action, id, title, title_suffix, date, from, to, at, until, for, all_day, description, clear_description, start, end, visibility, scope, web, preserve_time.\n",
             "Rules:\n",
             "- Prefer short friendly values like today, tomorrow, 2026-03-10, 15:00, 1h.\n",
             "- If you use start/end, include timezone like +09:00.\n",
             "- For '同じ時間' or '同時間', set preserve_time=true and set the target date.\n",
             "- For all-day events, set all_day=true and omit at/until/for/start/end.\n",
+            "- For add visibility, use visibility=public or visibility=private.\n",
             "- For update/delete/clone, always include id.\n",
             "- For recurring scope, use this, after, or all.\n",
             "- If an explicit RFC3339 time is more precise, use start/end.\n",
@@ -169,6 +174,17 @@ fn build_system_prompt(user_prompt: &str, anchor: NaiveDate) -> String {
         anchor = anchor.format("%Y-%m-%d"),
         user_prompt = user_prompt
     )
+}
+
+fn infer_visibility_from_prompt(prompt: &str) -> Option<String> {
+    if prompt.contains("非公開") {
+        return Some("private".to_string());
+    }
+    if prompt.contains("公開") && !prompt.contains("公開しない") && !prompt.contains("非公開")
+    {
+        return Some("public".to_string());
+    }
+    None
 }
 
 fn parse_prompt_plan(raw: &str) -> Result<PromptPlan> {
@@ -234,9 +250,12 @@ fn build_add_execution(plan: PromptPlan, anchor: NaiveDate) -> Result<PromptExec
     let start = parse_optional_timestamp(plan.start.as_deref(), anchor, context_date)?;
     let end = parse_optional_timestamp(plan.end.as_deref(), anchor, context_date)?;
     let uses_strict = start.is_some() || end.is_some();
+    let visibility = parse_visibility(plan.visibility.as_deref())?;
     let args = AddArgs {
         json: false,
         title: title.clone(),
+        public: matches!(visibility, EventVisibility::Public),
+        private: matches!(visibility, EventVisibility::Private),
         start,
         end,
         date: if uses_strict { None } else { plan.date },
@@ -287,6 +306,13 @@ fn build_add_execution(plan: PromptPlan, anchor: NaiveDate) -> Result<PromptExec
     if args.all_day {
         summary.push("all_day: true".to_string());
     }
+    summary.push(format!(
+        "visibility: {}",
+        match visibility {
+            EventVisibility::Public => "public",
+            EventVisibility::Private => "private",
+        }
+    ));
     let shell_command = build_shell_command("add", &add_flags(&args));
     Ok(PromptExecution {
         action: PromptAction::Add,
@@ -613,6 +639,14 @@ fn parse_scope_arg(input: Option<&str>) -> Result<Option<ApplyScopeArg>> {
         .transpose()
 }
 
+fn parse_visibility(input: Option<&str>) -> Result<EventVisibility> {
+    match input.unwrap_or("public") {
+        "public" => Ok(EventVisibility::Public),
+        "private" => Ok(EventVisibility::Private),
+        value => bail!("visibility は public / private のいずれかです: {value}"),
+    }
+}
+
 fn scope_name(scope: ApplyScopeArg) -> &'static str {
     match scope {
         ApplyScopeArg::This => "this",
@@ -655,6 +689,11 @@ fn list_flags(args: &ListArgs) -> Vec<(String, Option<String>)> {
 
 fn add_flags(args: &AddArgs) -> Vec<(String, Option<String>)> {
     let mut flags = vec![("--title".to_string(), Some(args.title.clone()))];
+    if args.private {
+        flags.push(("--private".to_string(), None));
+    } else if args.public {
+        flags.push(("--public".to_string(), None));
+    }
     if let Some(start) = &args.start {
         flags.push(("--start".to_string(), Some(start.to_rfc3339())));
     }
@@ -759,6 +798,7 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
+    use crate::model::EventVisibility;
 
     fn anchor() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 3, 9).expect("date")
@@ -781,6 +821,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
             version: 1,
         }
     }
@@ -803,6 +844,7 @@ mod tests {
             clear_description: None,
             start: None,
             end: None,
+            visibility: None,
             scope: None,
             web: None,
             preserve_time: Some(true),
@@ -840,6 +882,7 @@ mod tests {
             clear_description: None,
             start: None,
             end: None,
+            visibility: None,
             scope: None,
             web: None,
             preserve_time: None,
@@ -848,7 +891,7 @@ mod tests {
         let execution = build_execution(plan, anchor(), None).expect("execution");
         assert_eq!(
             execution.shell_command,
-            "cbzcal events add --title '伊藤様と打ち合わせ' --date tomorrow --at 15:00 --for 1h"
+            "cbzcal events add --title '伊藤様と打ち合わせ' --public --date tomorrow --at 15:00 --for 1h"
         );
     }
 
@@ -895,6 +938,7 @@ mod tests {
             clear_description: None,
             start: Some("2026-03-10T17:30:00+09:00".to_string()),
             end: Some("2026-03-10T20:30:00+09:00".to_string()),
+            visibility: None,
             scope: None,
             web: None,
             preserve_time: None,
@@ -904,12 +948,22 @@ mod tests {
         let EventsCommand::Add(args) = execution.command else {
             panic!("add");
         };
+        assert!(args.public);
+        assert!(!args.private);
         assert!(args.date.is_none());
         assert!(args.at.is_none());
         assert!(args.duration.is_none());
         assert_eq!(
             execution.shell_command,
-            "cbzcal events add --title 'ミーティング' --start '2026-03-10T17:30:00+09:00' --end '2026-03-10T20:30:00+09:00'"
+            "cbzcal events add --title 'ミーティング' --public --start '2026-03-10T17:30:00+09:00' --end '2026-03-10T20:30:00+09:00'"
+        );
+    }
+
+    #[test]
+    fn prompt_visibility_falls_back_to_private_hint() {
+        assert_eq!(
+            infer_visibility_from_prompt("明日の17時半から3時間、非公開で設定"),
+            Some("private".to_string())
         );
     }
 }

@@ -21,7 +21,10 @@ use serde_json::Value;
 use crate::{
     backend::{ApplyScope, CalendarBackend, ListQuery},
     config::{CredentialPair, CredentialSource, CybozuHtmlConfig},
-    model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent, short_id_from_event_id},
+    model::{
+        CalendarEvent, CloneOverrides, EventPatch, EventVisibility, NewEvent,
+        short_id_from_event_id,
+    },
 };
 
 const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
@@ -1097,6 +1100,7 @@ impl CalendarBackend for CybozuHtmlBackend {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: cloned_event.visibility,
         };
         validate_supported_add_input(&clone_input)?;
         let context = ScheduleIndexContext {
@@ -1686,6 +1690,14 @@ fn populate_schedule_entry_form(
         "Memo",
         input.description.as_deref().unwrap_or("").to_string(),
     );
+    set_form_value(
+        fields,
+        "Private",
+        match input.visibility {
+            EventVisibility::Public => "",
+            EventVisibility::Private => "1",
+        },
+    );
     set_form_value(fields, "sUID", context.current_user_uid.clone());
     set_form_value(fields, "Entry", "登録する");
 }
@@ -1708,6 +1720,7 @@ fn parse_schedule_form_event(
         attendees: Vec::new(),
         facility: None,
         calendar: None,
+        visibility: parse_form_visibility(fields),
         version: 1,
     })
 }
@@ -1717,6 +1730,13 @@ fn parse_schedule_modify_event(
     identity: &ScheduleViewIdentity,
 ) -> Result<CalendarEvent> {
     parse_schedule_form_event(fields, identity)
+}
+
+fn parse_form_visibility(fields: &[(String, String)]) -> EventVisibility {
+    match form_value(fields, "Private") {
+        Some("1") => EventVisibility::Private,
+        _ => EventVisibility::Public,
+    }
 }
 
 fn parse_schedule_form_date(fields: &[(String, String)]) -> Result<NaiveDate> {
@@ -1860,6 +1880,14 @@ fn populate_schedule_modify_form(
         fields,
         "Memo",
         event.description.as_deref().unwrap_or("").to_string(),
+    );
+    set_form_value(
+        fields,
+        "Private",
+        match event.visibility {
+            EventVisibility::Public => "",
+            EventVisibility::Private => "1",
+        },
     );
     set_form_value(fields, "Modify", "変更する");
 }
@@ -2040,6 +2068,7 @@ fn parse_schedule_index_events(
             attendees: Vec::new(),
             facility: None,
             calendar: calendar_name.map(str::to_string),
+            visibility: EventVisibility::Public,
             version: 1,
         });
     }
@@ -2538,6 +2567,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
         };
         let context = ScheduleIndexContext {
             current_user_uid: "379".to_string(),
@@ -2555,6 +2585,7 @@ mod tests {
         assert!(fields.contains(&(String::from("EndTime.Minute"), String::from("15"))));
         assert!(fields.contains(&(String::from("Detail"), String::from("テスト予定"))));
         assert!(fields.contains(&(String::from("Memo"), String::from("本文"))));
+        assert!(fields.contains(&(String::from("Private"), String::from(""))));
         assert!(fields.contains(&(String::from("Entry"), String::from("登録する"))));
     }
 
@@ -2569,6 +2600,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
         };
 
         let error = validate_supported_add_input(&input).expect_err("should reject");
@@ -2586,6 +2618,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
         };
 
         validate_supported_add_input(&input).expect("should allow");
@@ -2629,6 +2662,7 @@ mod tests {
                 attendees: Vec::new(),
                 facility: None,
                 calendar: None,
+                visibility: EventVisibility::Public,
                 version: 1,
             },
             CalendarEvent {
@@ -2642,6 +2676,7 @@ mod tests {
                 attendees: Vec::new(),
                 facility: None,
                 calendar: None,
+                visibility: EventVisibility::Public,
                 version: 1,
             },
         ];
@@ -2665,6 +2700,7 @@ mod tests {
                 "[cbzcal] friendly time probe 20260309".to_string(),
             ),
             ("Memo".to_string(), "friendly timed add".to_string()),
+            ("Private".to_string(), "1".to_string()),
         ];
         let identity = ScheduleViewIdentity {
             uid: "379".to_string(),
@@ -2682,6 +2718,7 @@ mod tests {
         );
         assert_eq!(event.title, "[cbzcal] friendly time probe 20260309");
         assert_eq!(event.description.as_deref(), Some("friendly timed add"));
+        assert_eq!(event.visibility, EventVisibility::Private);
         assert_eq!(
             event.starts_at,
             DateTime::parse_from_rfc3339("2099-01-07T09:00:00+09:00").expect("timestamp")
@@ -2721,6 +2758,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
             version: 2,
         };
         let identity = ScheduleViewIdentity {
@@ -2747,6 +2785,7 @@ mod tests {
         assert!(fields.contains(&(String::from("EndTime.Minute"), String::from("00"))));
         assert!(fields.contains(&(String::from("Detail"), String::from("updated title"))));
         assert!(fields.contains(&(String::from("Memo"), String::from("updated memo"))));
+        assert!(fields.contains(&(String::from("Private"), String::from(""))));
         assert!(fields.contains(&(String::from("Modify"), String::from("変更する"))));
     }
 
@@ -2819,6 +2858,7 @@ mod tests {
             attendees: Vec::new(),
             facility: None,
             calendar: None,
+            visibility: EventVisibility::Public,
             version: 2,
         };
         let identity = ScheduleViewIdentity {

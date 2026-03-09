@@ -2,6 +2,14 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Duration, FixedOffset};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EventVisibility {
+    #[default]
+    Public,
+    Private,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarEvent {
     pub id: String,
@@ -12,6 +20,8 @@ pub struct CalendarEvent {
     pub attendees: Vec<String>,
     pub facility: Option<String>,
     pub calendar: Option<String>,
+    #[serde(default)]
+    pub visibility: EventVisibility,
     pub version: u64,
 }
 
@@ -89,6 +99,7 @@ impl CalendarEvent {
             attendees: self.attendees.clone(),
             facility: self.facility.clone(),
             calendar: self.calendar.clone(),
+            visibility: self.visibility,
             version: 1,
         })
     }
@@ -107,6 +118,7 @@ pub struct NewEvent {
     pub attendees: Vec<String>,
     pub facility: Option<String>,
     pub calendar: Option<String>,
+    pub visibility: EventVisibility,
 }
 
 impl NewEvent {

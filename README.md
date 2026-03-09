@@ -70,6 +70,7 @@ cargo run -- -v events list --date today
 
 ```bash
 cargo run -- events --prompt "明日の15時から1時間、『伊藤様と打ち合わせ』で追加"
+cargo run -- events --prompt "明日の17時半から3時間、非公開で『ミーティング』を設定"
 ```
 
 `--yes` を付けると確認を省略できますが、これは `list` / `add` / `clone` の prompt 実行だけで有効です。`update` / `delete` では常に確認が必要です。
@@ -126,6 +127,7 @@ cargo run -- events add \
   --date 3/10 \
   --at 9 \
   --until 11 \
+  --private \
   --description "CLI 基盤の確認"
 
 cargo run -- events add \
@@ -140,6 +142,7 @@ cargo run -- events add \
 ```
 
 `cybozu-html` の `events add` は現時点で通常予定の単日登録のみ対応です。`--attendee`、`--facility`、`--calendar`、日付またぎ予定はまだ扱えません。
+`--public` / `--private` で予定の公開方法を切り替えられます。既定は `--public` 相当です。
 
 予定を更新します。
 

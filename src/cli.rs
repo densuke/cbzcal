@@ -6,7 +6,7 @@ use clap::ArgAction;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::backend::ListQuery;
-use crate::model::{CloneOverrides, EventPatch, NewEvent};
+use crate::model::{CloneOverrides, EventPatch, EventVisibility, NewEvent};
 
 const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
 
@@ -157,6 +157,18 @@ pub struct AddArgs {
     pub json: bool,
     #[arg(long)]
     pub title: String,
+    #[arg(
+        long = "public",
+        conflicts_with = "private",
+        help = "予定を公開予定として登録する。既定値"
+    )]
+    pub public: bool,
+    #[arg(
+        long = "private",
+        conflicts_with = "public",
+        help = "予定を非公開予定として登録する"
+    )]
+    pub private: bool,
     #[arg(long, help = "厳密な開始日時。RFC3339 形式")]
     pub start: Option<DateTime<FixedOffset>>,
     #[arg(long, help = "厳密な終了日時。RFC3339 形式")]
@@ -432,6 +444,11 @@ fn resolve_add_event(args: &AddArgs, anchor: NaiveDate) -> Result<NewEvent, Stri
         attendees: args.attendees.clone(),
         facility: args.facility.clone(),
         calendar: args.calendar.clone(),
+        visibility: if args.private {
+            EventVisibility::Private
+        } else {
+            EventVisibility::Public
+        },
     };
     event.validate().map_err(|error| error.to_string())?;
 
@@ -620,6 +637,8 @@ mod tests {
         let args = AddArgs {
             json: false,
             title: "打合せ".to_string(),
+            public: false,
+            private: false,
             start: None,
             end: None,
             date: Some("3/10".to_string()),
@@ -643,6 +662,8 @@ mod tests {
         let args = AddArgs {
             json: false,
             title: "作業".to_string(),
+            public: false,
+            private: false,
             start: None,
             end: None,
             date: Some("3/11".to_string()),
@@ -666,6 +687,8 @@ mod tests {
         let args = AddArgs {
             json: false,
             title: "休み".to_string(),
+            public: false,
+            private: false,
             start: None,
             end: None,
             date: Some("today".to_string()),
@@ -739,6 +762,8 @@ mod tests {
         let args = AddArgs {
             json: false,
             title: "混在".to_string(),
+            public: false,
+            private: false,
             start: Some(ts("2026-03-10T09:00:00+09:00")),
             end: Some(ts("2026-03-10T10:00:00+09:00")),
             date: Some("3/10".to_string()),
@@ -754,6 +779,30 @@ mod tests {
 
         let error = args.new_event_from(anchor()).expect_err("should fail");
         assert!(error.to_string().contains("同時に使えません"));
+    }
+
+    #[test]
+    fn add_supports_private_visibility() {
+        let args = AddArgs {
+            json: false,
+            title: "非公開打合せ".to_string(),
+            public: false,
+            private: true,
+            start: None,
+            end: None,
+            date: Some("today".to_string()),
+            at: Some("9".to_string()),
+            until: Some("10".to_string()),
+            duration: None,
+            all_day: false,
+            description: None,
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+        };
+
+        let event = args.new_event_from(anchor()).expect("event");
+        assert_eq!(event.visibility, EventVisibility::Private);
     }
 
     #[test]
