@@ -6,7 +6,7 @@
 ## 現状
 
 - `fixture` バックエンドでは、予定の一覧取得・追加・更新・複製・削除をローカル JSON に対して実行できます。
-- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list` + 単発予定の `events add` / `events update` / `events clone` / `events delete` まで実サイトで確認済みです。
+- `cybozu-html` バックエンドでは、Basic 認証 + Cybozu ログイン + `events list`、通常予定の `events add` / `events clone`、通常予定と繰り返し予定の `events update` / `events delete` まで実サイトで確認済みです。
 - `cybozu-html` の設定は、接続先 `base_url`、前段 Basic 認証、Cybozu ログイン画面 URL、Cybozu 本体ログイン資格情報を分けて持つ想定です。
 - `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は `XDG_STATE_HOME/cbzcal/session-cookies.json`、未設定時は `~/.local/state/cbzcal/session-cookies.json` です。
 - 設定ファイルは `.cbzcal.toml` を標準とし、探索順は `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml` です。

@@ -51,6 +51,12 @@ pub struct EventsArgs {
     pub list: ListArgs,
 }
 
+impl EventsArgs {
+    pub fn command_or_default(self) -> EventsCommand {
+        self.command.unwrap_or(EventsCommand::List(self.list))
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum EventsCommand {
     List(ListArgs),

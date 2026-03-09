@@ -40,7 +40,7 @@ pub fn execute(cli: Cli) -> Result<String> {
         }
         Command::Events(events) => {
             let mut backend = build_backend(&loaded.config)?;
-            let output = match events.command.unwrap_or(EventsCommand::List(events.list)) {
+            let output = match events.command_or_default() {
                 EventsCommand::List(args) => {
                     let query: ListQuery = args.query()?;
                     let events = backend.list_events(query.with_default_window())?;
