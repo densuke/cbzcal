@@ -66,6 +66,9 @@ pub trait CalendarBackend {
     fn update_event(&mut self, id: &str, patch: EventPatch) -> Result<CalendarEvent>;
     fn clone_event(&mut self, id: &str, overrides: CloneOverrides) -> Result<CalendarEvent>;
     fn delete_event(&mut self, id: &str) -> Result<CalendarEvent>;
+    fn drain_notices(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub fn build_backend(config: &AppConfig) -> Result<Box<dyn CalendarBackend>> {

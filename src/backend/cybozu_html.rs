@@ -30,6 +30,7 @@ pub struct CybozuHtmlBackend {
     config: CybozuHtmlConfig,
     client: Client,
     cookie_store: Arc<CookieStoreMutex>,
+    notices: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -125,6 +126,8 @@ impl CybozuHtmlBackend {
             .user_agent
             .clone()
             .unwrap_or_else(|| format!("cbzcal/{}", env!("CARGO_PKG_VERSION")));
+        let session_cache_path = config.session_cache_path();
+        let had_session_cache = session_cache_path.exists();
         let cookie_store = Arc::new(CookieStoreMutex::new(load_cookie_store(&config)?));
 
         let client = Client::builder()
@@ -133,11 +136,25 @@ impl CybozuHtmlBackend {
             .user_agent(user_agent)
             .build()?;
 
-        Ok(Self {
+        let mut backend = Self {
             config,
             client,
             cookie_store,
-        })
+            notices: Vec::new(),
+        };
+        if had_session_cache {
+            backend.push_notice(format!(
+                "保存済みセッション Cookie を読み込みました: {}",
+                session_cache_path.display()
+            ));
+        } else {
+            backend.push_notice(format!(
+                "セッション Cookie キャッシュは未作成です。必要ならログイン後に作成します: {}",
+                session_cache_path.display()
+            ));
+        }
+
+        Ok(backend)
     }
 
     pub fn probe_login(config: CybozuHtmlConfig) -> Result<LoginProbeReport> {
@@ -467,7 +484,7 @@ impl CybozuHtmlBackend {
     }
 
     fn authenticated_schedule_index(
-        &self,
+        &mut self,
         query: &ListQuery,
     ) -> Result<(Option<CredentialPair>, Vec<ResponseSnapshot>)> {
         let (basic_credentials, first_schedule_index) =
@@ -501,7 +518,7 @@ impl CybozuHtmlBackend {
     }
 
     fn bootstrap_authenticated_schedule_index(
-        &self,
+        &mut self,
     ) -> Result<(Option<CredentialPair>, ResponseSnapshot)> {
         let basic_credentials = self.config.resolve_basic_credentials()?;
         let office_credentials = self
@@ -513,10 +530,17 @@ impl CybozuHtmlBackend {
             .with_context(|| format!("初期 URL へ接続できません: {}", self.config.base_url))?;
 
         let first_schedule_index = if is_login_page(&initial.url, &initial.body) {
+            self.push_notice(
+                "保存済みセッションを再利用できなかったため、Cybozu へ再ログインします",
+            );
             let login = self
                 .execute_office_login(&initial, &basic_credentials, &office_credentials)
                 .context("Cybozu ログインシーケンスに失敗しました")?;
             self.persist_cookie_store()?;
+            self.push_notice(format!(
+                "ログイン後のセッション Cookie を保存しました: {}",
+                self.config.session_cache_path().display()
+            ));
             self.fetch_schedule_index(
                 &basic_credentials,
                 None,
@@ -524,8 +548,10 @@ impl CybozuHtmlBackend {
                     .as_deref(),
             )?
         } else if is_schedule_index_page(&initial.url, &initial.body) {
+            self.push_notice("保存済みセッション Cookie を再利用して ScheduleIndex に到達しました");
             initial
         } else if is_authenticated_page(&initial.url, &initial.body) {
+            self.push_notice("保存済みセッション Cookie を再利用して認証済みページに到達しました");
             self.fetch_schedule_index(&basic_credentials, None, None)?
         } else {
             bail!("初回ページが login/authenticated のどちらにも判定できませんでした");
@@ -538,6 +564,10 @@ impl CybozuHtmlBackend {
 
     fn persist_cookie_store(&self) -> Result<()> {
         persist_cookie_store(&self.config, &self.cookie_store)
+    }
+
+    fn push_notice(&mut self, notice: impl Into<String>) {
+        self.notices.push(notice.into());
     }
 
     fn fetch_schedule_index(
@@ -856,6 +886,10 @@ impl CybozuHtmlBackend {
 impl CalendarBackend for CybozuHtmlBackend {
     fn name(&self) -> &'static str {
         "cybozu-html"
+    }
+
+    fn drain_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
     }
 
     fn list_events(&mut self, query: ListQuery) -> Result<Vec<CalendarEvent>> {
@@ -1332,7 +1366,7 @@ fn validate_supported_delete_form(fields: &[(String, String)]) -> Result<()> {
 
 impl CybozuHtmlBackend {
     fn resolve_event_identity(
-        &self,
+        &mut self,
         id_or_short_id: &str,
     ) -> Result<(Option<CredentialPair>, ScheduleViewIdentity)> {
         let (basic_credentials, first_schedule_index) =
@@ -1350,7 +1384,7 @@ impl CybozuHtmlBackend {
     }
 
     fn resolve_short_event_identity(
-        &self,
+        &mut self,
         short_id: &str,
         basic_credentials: &Option<CredentialPair>,
         first_schedule_index: &ResponseSnapshot,

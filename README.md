@@ -58,6 +58,12 @@ JSON が必要な場合は `--json` を付けます。
 cargo run -- events list --json
 ```
 
+認証経路やセッション再利用の補助情報を見たい場合は `-v` を付けます。`-v` の出力は標準エラーに出ます。
+
+```bash
+cargo run -- -v events list --date today
+```
+
 期間を明示したい場合は `--from` / `--to` を付けます。未指定時は JST 当日 00:00 から 1 週間です。
 
 ```bash

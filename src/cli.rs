@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, TimeDelta, TimeZone, Utc};
+use clap::ArgAction;
 use clap::{Args, Parser, Subcommand};
 
 use crate::backend::ListQuery;
@@ -16,6 +17,14 @@ const JST_OFFSET_SECONDS: i32 = 9 * 60 * 60;
     about = "サイボウズ Office の予定表操作に向けた CLI ベース"
 )]
 pub struct Cli {
+    #[arg(
+        short = 'v',
+        long = "verbose",
+        global = true,
+        action = ArgAction::Count,
+        help = "冗長出力。認証経路やセッション再利用の補助情報を stderr に出す"
+    )]
+    pub verbose: u8,
     #[arg(
         long,
         global = true,
@@ -679,5 +688,11 @@ mod tests {
 
         let error = args.new_event_from(anchor()).expect_err("should fail");
         assert!(error.to_string().contains("同時に使えません"));
+    }
+
+    #[test]
+    fn parses_global_verbose_count() {
+        let cli = Cli::try_parse_from(["cbzcal", "-vv", "events", "list"]).expect("parse");
+        assert_eq!(cli.verbose, 2);
     }
 }

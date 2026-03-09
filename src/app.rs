@@ -24,6 +24,7 @@ struct ApiEvent<'a> {
 
 pub fn execute(cli: Cli) -> Result<String> {
     let loaded = AppConfig::load_with_resolution(cli.config.as_deref())?;
+    let verbose = cli.verbose;
 
     match cli.command {
         Command::Doctor => render_json(&loaded.config.doctor_report(&loaded.path)),
@@ -37,7 +38,7 @@ pub fn execute(cli: Cli) -> Result<String> {
         }
         Command::Events { command } => {
             let mut backend = build_backend(&loaded.config)?;
-            match command {
+            let output = match command {
                 EventsCommand::List(args) => {
                     let query: ListQuery = args.query()?;
                     let events = backend.list_events(query.with_default_window())?;
@@ -71,13 +72,24 @@ pub fn execute(cli: Cli) -> Result<String> {
                     let event = backend.delete_event(&args.id)?;
                     render_event_result("削除しました", backend.name(), &event, args.json)
                 }
-            }
+            }?;
+            emit_verbose_notices(verbose, backend.drain_notices());
+            Ok(output)
         }
     }
 }
 
 fn render_json<T: Serialize>(value: &T) -> Result<String> {
     Ok(serde_json::to_string_pretty(value)?)
+}
+
+fn emit_verbose_notices(verbose: u8, notices: Vec<String>) {
+    if verbose == 0 {
+        return;
+    }
+    for notice in notices {
+        eprintln!("[verbose] {notice}");
+    }
 }
 
 fn render_event(event: &CalendarEvent) -> ApiEvent<'_> {
