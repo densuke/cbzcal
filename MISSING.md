@@ -9,7 +9,7 @@
 
 ## High
 
-- [ ] README 冒頭の実装範囲説明が古い
+- [x] README 冒頭の実装範囲説明が古い
   - 記載: `README.md` 冒頭で「`cybozu-html` による認証、一覧取得、単発予定追加まで」
   - 実装/同README内現状: `events clone` / `events update` / `events delete`（繰り返しの `update/delete` 含む）まで対応
   - 影響: 初見ユーザーが「どこまで使えるか」を誤認しやすい
