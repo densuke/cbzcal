@@ -11,6 +11,7 @@
 - `events --prompt "..."` で自然文から `list` / `add` / `update` / `clone` / `delete` の引数生成を試せます。既定では必ず確認し、`--yes` は `list` / `add` / `clone` のみ省略可能です。
 - `cybozu-html` はログイン後の Cookie をローカルに保存し、次回起動時に再利用します。既定保存先は Unix 系では `XDG_STATE_HOME/cbzcal/session-cookies.json` (未設定時は `~/.local/state/cbzcal/session-cookies.json`)、Windows では `~/.cbzcal/session-cookies.json` です。
 - 予定データもローカルにキャッシュします。リクエストされた期間がすでに取得済みの期間内（サブレンジ）であれば、通信を行わずにキャッシュから返します。
+- 予定キャッシュ保存先を変えたい場合は `events_cache_path` を設定します（未指定時は Unix 系で `XDG_CACHE_HOME/cbzcal/events-cache.json`、未設定時は `~/.cache/cbzcal/events-cache.json`、Windows では `~/.cbzcal/events-cache.json`）。
 - 設定ファイルは `.cbzcal.toml` を標準とします。探索順は Unix 系では `カレントディレクトリ -> XDG_CONFIG_HOME/cbzcal/config.toml -> ~/.cbzcal.toml`、Windows では `カレントディレクトリ -> ~/.cbzcal.toml` です。
 - YAML も読めますが、各場所で `.toml` を先に見て、なければ `.yml` を見ます。
 - Unix 系では、設定ファイルの権限が `0400` または `0600` でないと起動しません。
@@ -66,6 +67,12 @@ JSON が必要な場合は `--json` を付けます。
 
 ```bash
 cargo run -- events list --json
+```
+
+キャッシュを使わずに都度取得したい場合は `--no-cache` を付けます。
+
+```bash
+cargo run -- --no-cache events list --date today
 ```
 
 認証経路やセッション再利用の補助情報を見たい場合は `-v` を付けます。`-v` の出力は標準エラーに出ます。
@@ -208,6 +215,9 @@ cargo run -- events delete \
 `--prompt` でローカル LLM を使う場合は、必要に応じて設定ファイルに `ollama` セクションを追加します。未指定時は `http://127.0.0.1:11434` と `gemma3:4b` を使います。
 
 ```toml
+# 予定キャッシュの保存先を明示したい場合
+events_cache_path = "/home/you/.cache/cbzcal/events-cache.json"
+
 [ollama]
 base_url = "http://127.0.0.1:11434"
 model = "gemma3:4b"

@@ -1,5 +1,8 @@
 backend = "fixture"
 
+# 予定キャッシュの保存先。未指定時は XDG_CACHE_HOME/cbzcal/events-cache.json
+# events_cache_path = "/home/you/.cache/cbzcal/events-cache.json"
+
 [fixture]
 path = "fixtures/sample-calendar.json"
 

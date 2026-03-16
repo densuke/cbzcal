@@ -81,11 +81,11 @@
   - 実装: `src/cli.rs` の `Command::Shell`、`src/app.rs` の `Command::Shell` 分岐
   - 現状ドキュメント: `README.md` / `docs/02-architecture.md` のコマンド一覧に未記載
 
-- [ ] グローバルオプション `--no-cache` がドキュメント未記載
+- [x] グローバルオプション `--no-cache` がドキュメント未記載
   - 実装: `src/cli.rs` の `Cli.no_cache`、`src/app.rs` -> `build_backend(..., cli.no_cache, ...)`
   - 現状ドキュメント: `README.md` に利用方法・意味・注意点の記載なし
 
-- [ ] 設定項目 `events_cache_path` がドキュメント未記載
+- [x] 設定項目 `events_cache_path` がドキュメント未記載
   - 実装: `src/config.rs` の `AppConfig.events_cache_path` と `events_cache_path()`
   - 現状ドキュメント: `cbzcal.example.toml` と `README.md` に設定キー説明なし
 
