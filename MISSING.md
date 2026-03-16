@@ -77,7 +77,7 @@
 
 ## Medium
 
-- [ ] `shell` サブコマンドがドキュメント未記載
+- [x] `shell` サブコマンドがドキュメント未記載
   - 実装: `src/cli.rs` の `Command::Shell`、`src/app.rs` の `Command::Shell` 分岐
   - 現状ドキュメント: `README.md` / `docs/02-architecture.md` のコマンド一覧に未記載
 

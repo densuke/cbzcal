@@ -70,6 +70,7 @@ flowchart LR
 
 ```text
 cbzcal doctor
+cbzcal shell <bash|zsh|fish|powershell|elvish>
 cbzcal events
 cbzcal events list
 cbzcal events add
