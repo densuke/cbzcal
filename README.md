@@ -1,5 +1,13 @@
 # cbzcal
 
+## Build Status
+
+| OS | Status |
+| --- | --- |
+| Linux | [![Build Linux](https://github.com/densuke/cbzcal/actions/workflows/build-linux.yml/badge.svg?branch=main)](https://github.com/densuke/cbzcal/actions/workflows/build-linux.yml) |
+| macOS | [![Build macOS](https://github.com/densuke/cbzcal/actions/workflows/build-macos.yml/badge.svg?branch=main)](https://github.com/densuke/cbzcal/actions/workflows/build-macos.yml) |
+| Windows | [![Build Windows](https://github.com/densuke/cbzcal/actions/workflows/build-windows.yml/badge.svg?branch=main)](https://github.com/densuke/cbzcal/actions/workflows/build-windows.yml) |
+
 サイボウズ Office の予定表を CLI から扱うためのベースプロジェクトです。  
 現時点では、公開ドキュメントの整理、日本語の設計資料、TDD 用の `fixture` バックエンド、そして `cybozu-html` による認証、一覧取得、通常予定の追加・複製、通常予定と繰り返し予定の更新・削除までを用意しています。
 
