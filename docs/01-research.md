@@ -686,7 +686,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 実サイト確認結果:
 
 - 2099-01-05 09:00-09:30 JST のテスト予定を headless で追加できた
-- 返却された複合 ID は `sEID=3096796&UID=379&GID=183&Date=da.2099.1.5&BDate=da.2099.1.5`
+- 返却された複合 ID は `sEID=1000001&UID=101&GID=201&Date=da.2099.1.5&BDate=da.2099.1.5`
 - 直後の `events list --from 2099-01-05T00:00:00+09:00 --to 2099-01-06T00:00:00+09:00` で同一予定を再取得できた
 
 現時点の制約:
@@ -712,7 +712,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 
 実サイト確認結果:
 
-- `sEID=3096804` の将来日テスト予定を 2099-01-07 13:00-14:30 JST に更新できた
+- `sEID=1000002` の将来日テスト予定を 2099-01-07 13:00-14:30 JST に更新できた
 - 更新後の title は `[cbzcal] updated probe 20260309`
 - 直後の `events list --from 2099-01-07 --for 1d` で同一 `sEID` を再取得できた
 
@@ -741,7 +741,7 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 
 実サイト確認結果:
 
-- 2099 年に作成していた検証用予定 `sEID=3096796`, `3096804`, `3096808` を headless で削除できた
+- 2099 年に作成していた検証用予定 `sEID=1000001`, `1000002`, `1000003` を headless で削除できた
 - `events list --from 2099-01-05 --for 4d` の結果は空配列になった
 
 2026-03-09 追記:
@@ -758,20 +758,20 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 2026-03-09 時点で、CLI の出力には利用者向けの `short_id` を追加しました。
 
 - 形式は `sEID@YYYY-MM-DD`
-- 例: `3096817@2099-01-09`
+- 例: `1000004@2099-01-09`
 - `sEID` だけでは繰り返し予定や occurrence の区別に不足するため、対象日を含める
 - 内部では従来どおり `sEID=...&UID=...&GID=...&Date=...&BDate=...` の複合 ID を保持する
 
 実装済みの扱い:
 
 - `events list` / `events add` / `events update` の JSON 出力に `short_id` を含める
-- `events update --id 3096817@2099-01-09` のように短縮 ID を直接受け付ける
-- `events clone --id 3096817@2099-01-09` / `events delete --id 3096817@2099-01-09` も同様に受け付ける
+- `events update --id 1000004@2099-01-09` のように短縮 ID を直接受け付ける
+- `events clone --id 1000004@2099-01-09` / `events delete --id 1000004@2099-01-09` も同様に受け付ける
 - 短縮 ID が渡された場合は、対象週の `ScheduleIndex` を headless で取得して正規 ID に解決する
 
 実サイト確認結果:
 
-- `3096817@2099-01-09` を使って `events update` を実行できた
+- `1000004@2099-01-09` を使って `events update` を実行できた
 - 同じ `short_id` を使って `events delete` を実行できた
 
 ### 21. `events clone` 実装メモ
@@ -788,8 +788,8 @@ ag.cgi?page=ScheduleDelete&UID=<UID>&GID=<GID>&Date=<Date>&BDate=<BDate>&sEID=<s
 
 実サイト確認結果:
 
-- `3096828@2099-01-10` を元に `--title-suffix " (複製)" --start 2099-01-11T14:00:00+09:00` を実行できた
-- 作成された複製予定の `short_id` は `3096832@2099-01-11` だった
+- `1000005@2099-01-10` を元に `--title-suffix " (複製)" --start 2099-01-11T14:00:00+09:00` を実行できた
+- 作成された複製予定の `short_id` は `1000006@2099-01-11` だった
 
 現時点の制約:
 
