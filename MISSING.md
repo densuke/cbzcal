@@ -11,62 +11,62 @@
 
 ### Phase 0: 事前準備（直列）
 
-- [ ] `main` を最新化し、作業前にワークツリー方針を確認する
-- [ ] 競合回避のため、README を触る作業範囲を A/B で明確に分離する
+- [x] `main` を最新化し、作業前にワークツリー方針を確認する
+- [x] 競合回避のため、README を触る作業範囲を A/B で明確に分離する
   - A: README 冒頭の実装範囲説明（High）
   - B: README の CLI/設定項目追記（Medium）
 
 ### Phase 1: High 対応（単独または先行実施）
 
-- [ ] README 冒頭の実装範囲説明を現状実装に合わせる
-- [ ] 差分レビューを行い、コミットする（High 専用コミット）
+- [x] README 冒頭の実装範囲説明を現状実装に合わせる
+- [x] 差分レビューを行い、コミットする（High 専用コミット）
 
 ### Phase 2: Medium 対応（並列可能）
 
-- [ ] 【並列可: Track B】README に `shell` / `--no-cache` / `events_cache_path` を追記する
-- [ ] 【並列可: Track C】`docs/02-architecture.md` の「実装されたら」表現を実装済み表現へ更新する
-- [ ] 各 Track ごとに差分レビューし、独立コミットを作成する
+- [x] 【並列可: Track B】README に `shell` / `--no-cache` / `events_cache_path` を追記する
+- [x] 【並列可: Track C】`docs/02-architecture.md` の「実装されたら」表現を実装済み表現へ更新する
+- [x] 各 Track ごとに差分レビューし、独立コミットを作成する
 
 ### Phase 3: 統合確認（直列）
 
-- [ ] 全コミット適用後に `MISSING.md` の High/Medium 項目を完了へ更新する
-- [ ] README と `docs/02-architecture.md` の記述整合性を最終確認する
-- [ ] 「doc 有 / impl 無」の再照合を実施し、Low 項目の状態を更新する
+- [x] 全コミット適用後に `MISSING.md` の High/Medium 項目を完了へ更新する
+- [x] README と `docs/02-architecture.md` の記述整合性を最終確認する
+- [x] 「doc 有 / impl 無」の再照合を実施し、Low 項目の状態を更新する
 
 ### 並列実行の目安
 
-- [ ] 並列可能: Phase 2 の Track B（README 追記）と Track C（architecture 更新）
-- [ ] 非並列推奨: README 冒頭（High）と README 追記（Medium）を同時編集する運用
+- [x] 並列可能: Phase 2 の Track B（README 追記）と Track C（architecture 更新）
+- [x] 非並列推奨: README 冒頭（High）と README 追記（Medium）を同時編集する運用
   - 理由: 同一ファイル競合とレビュー負荷を避けるため
 
 ## Worktree 実行テンプレート（実施時に使用）
 
 ### ブランチ / ワークツリー割り当て
 
-- [ ] WT-A（High）: README 冒頭の実装範囲更新
+- [x] WT-A（High）: README 冒頭の実装範囲更新
   - branch 例: `docs/missing-high-readme-scope`
   - 対象: `README.md` 冒頭の現状説明のみ
 
-- [ ] WT-B（Medium-README）: README への未記載項目追記
+- [x] WT-B（Medium-README）: README への未記載項目追記
   - branch 例: `docs/missing-medium-readme-cli-config`
   - 対象: `shell`, `--no-cache`, `events_cache_path`
 
-- [ ] WT-C（Medium-Architecture）: architecture 文言更新
+- [x] WT-C（Medium-Architecture）: architecture 文言更新
   - branch 例: `docs/missing-medium-architecture-wording`
   - 対象: `docs/02-architecture.md` の計画表現
 
 ### 実行順（推奨）
 
-- [ ] 1. WT-A を先に完了（README 冒頭のみ編集）
-- [ ] 2. WT-B / WT-C を並列で実施
-- [ ] 3. 各 branch を個別レビューして順次マージ
-- [ ] 4. 最後に `MISSING.md` の該当チェックを更新
+- [x] 1. WT-A を先に完了（README 冒頭のみ編集）
+- [x] 2. WT-B / WT-C を並列で実施
+- [x] 3. 各 branch を個別レビューして順次マージ
+- [x] 4. 最後に `MISSING.md` の該当チェックを更新
 
 ### レビュー観点（各 WT 共通）
 
-- [ ] 記述が実装仕様（`src/cli.rs`, `src/config.rs`, `src/backend/cybozu_html.rs`）と一致している
-- [ ] 用語・表現が README / docs 間で矛盾していない
-- [ ] 変更範囲が担当テーマから逸脱していない（不要編集なし）
+- [x] 記述が実装仕様（`src/cli.rs`, `src/config.rs`, `src/backend/cybozu_html.rs`）と一致している
+- [x] 用語・表現が README / docs 間で矛盾していない
+- [x] 変更範囲が担当テーマから逸脱していない（不要編集なし）
 
 ## High
 
