@@ -89,7 +89,7 @@
   - 実装: `src/config.rs` の `AppConfig.events_cache_path` と `events_cache_path()`
   - 現状ドキュメント: `cbzcal.example.toml` と `README.md` に設定キー説明なし
 
-- [ ] `docs/02-architecture.md` の `cybozu-html` 記述が計画時の表現のまま
+- [x] `docs/02-architecture.md` の `cybozu-html` 記述が計画時の表現のまま
   - 記載: 「`cybozu-html` が実装されたら、最低でも次を担当します。」
   - 実装: `src/backend/cybozu_html.rs` で実装済み（一覧/追加/更新/複製/削除の主要経路あり）
 

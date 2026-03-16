@@ -85,9 +85,9 @@ cbzcal events --prompt "明日の15時から1時間、打ち合わせで追加"
 `-v` は認証経路やセッション再利用の補助情報を標準エラーに出します。
 `--prompt` は実行前に必ず解釈結果と生成コマンドを表示し、既定では `[y/N]` で確認します。`--yes` は `list/add/clone` のみ省略可能で、`update/delete` では使えません。`add` では `公開` / `非公開` の意図を `--public` / `--private` に解釈します。
 
-## `cybozu-html` バックエンドの想定責務
+## `cybozu-html` バックエンドの責務
 
-`cybozu-html` が実装されたら、最低でも次を担当します。
+現状の `cybozu-html` 実装は、最低でも次を担当します。
 
 - Basic 認証付き HTTP クライアント生成
 - Cookie セッション維持と再利用
