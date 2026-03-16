@@ -95,5 +95,5 @@
 
 ## Low
 
-- [ ] 「ドキュメントにあるのに実装されていない」機能仕様は、主要ユーザー導線（`doctor` / `probe-login` / `events list|add|update|clone|delete`）では未検出
-  - 補足: 現時点では未検出だが、機能追加のたびに再照合を実施する
+- [x] 「ドキュメントにあるのに実装されていない」機能仕様は、主要ユーザー導線（`doctor` / `probe-login` / `events list|add|update|clone|delete`）では未検出
+  - 補足: 2026-03-16 再照合でも未検出。機能追加のたびに再照合を継続する
