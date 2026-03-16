@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent};
 use super::{ApplyScope, CalendarBackend, ListQuery};
+use crate::model::{CalendarEvent, CloneOverrides, EventPatch, NewEvent};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedEvents {
@@ -73,8 +73,9 @@ impl CachingBackend {
         }
 
         let content = serde_json::to_string(&cached)?;
-        fs::write(&self.cache_path, content)
-            .with_context(|| format!("キャッシュを保存できません: {}", self.cache_path.display()))?;
+        fs::write(&self.cache_path, content).with_context(|| {
+            format!("キャッシュを保存できません: {}", self.cache_path.display())
+        })?;
 
         #[cfg(unix)]
         {
@@ -233,7 +234,11 @@ mod tests {
         let cache_path = temp.path().join("cache.json");
 
         let calls = Arc::new(Mutex::new(0));
-        let event = dummy_event("1", "2026-03-09T09:00:00+09:00", "2026-03-09T10:00:00+09:00");
+        let event = dummy_event(
+            "1",
+            "2026-03-09T09:00:00+09:00",
+            "2026-03-09T10:00:00+09:00",
+        );
 
         let inner = CounterBackend {
             calls: calls.clone(),
@@ -263,6 +268,216 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(), 1);
         assert!(backend.drain_notices().is_empty()); // No notice from inner backend
 
+        Ok(())
+    }
+
+    #[test]
+    fn cache_disabled_always_calls_backend() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+
+        let calls = Arc::new(Mutex::new(0));
+        let inner = CounterBackend {
+            calls: calls.clone(),
+            events: Vec::new(),
+            notices: Vec::new(),
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, true); // disabled=true
+
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        backend.list_events(q.clone())?;
+        backend.list_events(q)?;
+        assert_eq!(*calls.lock().unwrap(), 2);
+        Ok(())
+    }
+
+    struct MutBackend {
+        list_calls: Arc<Mutex<usize>>,
+        events: Vec<CalendarEvent>,
+        notices: Vec<String>,
+    }
+
+    impl CalendarBackend for MutBackend {
+        fn name(&self) -> &'static str {
+            "mut"
+        }
+        fn list_events(&mut self, _query: ListQuery) -> Result<Vec<CalendarEvent>> {
+            *self.list_calls.lock().unwrap() += 1;
+            Ok(self.events.clone())
+        }
+        fn add_event(&mut self, _input: NewEvent) -> Result<CalendarEvent> {
+            Ok(dummy_event(
+                "new@2026-03-09",
+                "2026-03-09T09:00:00+09:00",
+                "2026-03-09T10:00:00+09:00",
+            ))
+        }
+        fn update_event(
+            &mut self,
+            id: &str,
+            _patch: EventPatch,
+            _scope: Option<ApplyScope>,
+        ) -> Result<CalendarEvent> {
+            Ok(dummy_event(
+                id,
+                "2026-03-09T09:00:00+09:00",
+                "2026-03-09T10:00:00+09:00",
+            ))
+        }
+        fn clone_event(&mut self, id: &str, _overrides: CloneOverrides) -> Result<CalendarEvent> {
+            Ok(dummy_event(
+                &format!("{id}-clone"),
+                "2026-03-09T09:00:00+09:00",
+                "2026-03-09T10:00:00+09:00",
+            ))
+        }
+        fn delete_event(&mut self, id: &str, _scope: Option<ApplyScope>) -> Result<CalendarEvent> {
+            Ok(dummy_event(
+                id,
+                "2026-03-09T09:00:00+09:00",
+                "2026-03-09T10:00:00+09:00",
+            ))
+        }
+        fn drain_notices(&mut self) -> Vec<String> {
+            std::mem::take(&mut self.notices)
+        }
+    }
+
+    #[test]
+    fn add_event_invalidates_cache() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+        let list_calls = Arc::new(Mutex::new(0));
+        let inner = MutBackend {
+            list_calls: list_calls.clone(),
+            events: Vec::new(),
+            notices: Vec::new(),
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
+
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+
+        backend.list_events(q.clone())?; // miss → 1
+        backend.list_events(q.clone())?; // hit → still 1
+        assert_eq!(*list_calls.lock().unwrap(), 1);
+
+        // add event should invalidate cache
+        let new_event = NewEvent {
+            title: "new".to_string(),
+            description: None,
+            starts_at: ts("2026-03-10T09:00:00+09:00"),
+            ends_at: ts("2026-03-10T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: crate::model::EventVisibility::Public,
+        };
+        backend.add_event(new_event)?;
+        backend.list_events(q)?; // cache invalidated → 2
+        assert_eq!(*list_calls.lock().unwrap(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn delete_event_invalidates_cache() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+        let list_calls = Arc::new(Mutex::new(0));
+        let inner = MutBackend {
+            list_calls: list_calls.clone(),
+            events: Vec::new(),
+            notices: Vec::new(),
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        backend.list_events(q.clone())?; // miss → 1
+        backend.list_events(q.clone())?; // hit → 1
+        backend.delete_event("some-id", None)?;
+        backend.list_events(q)?; // miss after invalidation → 2
+        assert_eq!(*list_calls.lock().unwrap(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn update_event_invalidates_cache() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+        let list_calls = Arc::new(Mutex::new(0));
+        let inner = MutBackend {
+            list_calls: list_calls.clone(),
+            events: Vec::new(),
+            notices: Vec::new(),
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        backend.list_events(q.clone())?;
+        backend.update_event("some-id", crate::model::EventPatch::default(), None)?;
+        backend.list_events(q)?;
+        assert_eq!(*list_calls.lock().unwrap(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn clone_event_invalidates_cache() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+        let list_calls = Arc::new(Mutex::new(0));
+        let inner = MutBackend {
+            list_calls: list_calls.clone(),
+            events: Vec::new(),
+            notices: Vec::new(),
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        backend.list_events(q.clone())?;
+        backend.clone_event(
+            "some-id",
+            crate::model::CloneOverrides {
+                title: None,
+                title_suffix: None,
+                starts_at: None,
+                ends_at: None,
+            },
+        )?;
+        backend.list_events(q)?;
+        assert_eq!(*list_calls.lock().unwrap(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn drain_notices_propagates_from_inner() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let cache_path = temp.path().join("cache.json");
+        let list_calls = Arc::new(Mutex::new(0));
+        let inner = MutBackend {
+            list_calls: list_calls.clone(),
+            events: Vec::new(),
+            notices: vec!["初期化完了".to_string()],
+        };
+        let mut backend = CachingBackend::new(Box::new(inner), cache_path, false);
+        let q = ListQuery {
+            from: Some(ts("2026-03-09T00:00:00+09:00")),
+            to: Some(ts("2026-03-16T00:00:00+09:00")),
+        };
+        backend.list_events(q)?;
+        let notices = backend.drain_notices();
+        assert_eq!(notices, vec!["初期化完了"]);
+        assert!(backend.drain_notices().is_empty());
         Ok(())
     }
 }

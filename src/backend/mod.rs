@@ -100,17 +100,15 @@ pub fn build_backend(
 ) -> Result<Box<dyn CalendarBackend>> {
     let inner: Box<dyn CalendarBackend> = match config.backend {
         BackendKind::Fixture => {
-            let fixture = config
-                .fixture
-                .clone()
-                .expect("fixture backend requires fixture config");
+            let fixture = config.fixture.clone().ok_or_else(|| {
+                anyhow::anyhow!("fixture バックエンドには [fixture] セクションが必要です")
+            })?;
             Box::new(FixtureBackend::open(fixture.path)?)
         }
         BackendKind::CybozuHtml => {
-            let cybozu = config
-                .cybozu_html
-                .clone()
-                .expect("cybozu-html backend requires config");
+            let cybozu = config.cybozu_html.clone().ok_or_else(|| {
+                anyhow::anyhow!("cybozu-html バックエンドには [cybozu-html] セクションが必要です")
+            })?;
             Box::new(CybozuHtmlBackend::new(cybozu)?)
         }
     };
@@ -181,8 +179,27 @@ mod tests {
         assert!(q1.contains(&q_sub));
         assert!(!q1.contains(&q_out));
 
-        let q_unbounded = ListQuery { from: None, to: None };
+        let q_unbounded = ListQuery {
+            from: None,
+            to: None,
+        };
         assert!(q_unbounded.contains(&q1));
         assert!(!q1.contains(&q_unbounded));
+    }
+
+    #[test]
+    fn build_backend_returns_error_when_fixture_config_missing() {
+        let config = AppConfig {
+            backend: BackendKind::Fixture,
+            fixture: None,
+            cybozu_html: None,
+            events_cache_path: None,
+            ollama: None,
+        };
+        let result: Result<Box<dyn CalendarBackend>> =
+            build_backend(&config, false, PathBuf::from("/tmp/cbzcal-test-cache.json"));
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("fixture"));
     }
 }

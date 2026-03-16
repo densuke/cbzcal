@@ -148,11 +148,17 @@ impl std::fmt::Debug for CybozuHtmlConfig {
             .field("basic_username_env", &self.basic_username_env)
             .field("basic_password_env", &self.basic_password_env)
             .field("basic_username", &self.basic_username)
-            .field("basic_password", &self.basic_password.as_ref().map(|_| "***"))
+            .field(
+                "basic_password",
+                &self.basic_password.as_ref().map(|_| "***"),
+            )
             .field("office_username_env", &self.office_username_env)
             .field("office_password_env", &self.office_password_env)
             .field("office_username", &self.office_username)
-            .field("office_password", &self.office_password.as_ref().map(|_| "***"))
+            .field(
+                "office_password",
+                &self.office_password.as_ref().map(|_| "***"),
+            )
             .field("user_agent", &self.user_agent)
             .finish()
     }
@@ -206,69 +212,60 @@ fn resolve_credential_pair(
     inline_username: Option<&str>,
     inline_password: Option<&str>,
 ) -> Result<Option<CredentialPair>> {
+    // 環境変数名が両方指定されている場合は、環境変数から読む
     match (username_env, password_env) {
-        (Some(username_env), Some(password_env)) => {
-            let username = env::var(username_env).ok();
-            let password = env::var(password_env).ok();
-
-            match (username, password) {
-                (Some(username), Some(password)) => Ok(Some(CredentialPair {
-                    username,
-                    password,
-                    source: CredentialSource::Env {
-                        username_env: username_env.to_string(),
-                        password_env: password_env.to_string(),
-                    },
-                })),
-                (Some(_), None) | (None, Some(_)) => {
-                    if let (Some(inline_username), Some(inline_password)) =
-                        (inline_username, inline_password)
-                    {
-                        Ok(Some(CredentialPair {
-                            username: inline_username.to_string(),
-                            password: inline_password.to_string(),
-                            source: CredentialSource::Inline,
-                        }))
-                    } else {
-                        bail!(
-                            "環境変数 {username_env} / {password_env} はどちらか一方しか設定されていません"
-                        )
-                    }
+        (Some(u_env), Some(p_env)) => {
+            let u_val = env::var(u_env).ok();
+            let p_val = env::var(p_env).ok();
+            match (u_val, p_val) {
+                (Some(username), Some(password)) => {
+                    return Ok(Some(CredentialPair {
+                        username,
+                        password,
+                        source: CredentialSource::Env {
+                            username_env: u_env.to_owned(),
+                            password_env: p_env.to_owned(),
+                        },
+                    }));
                 }
-                (None, None) => match (inline_username, inline_password) {
-                    (Some(inline_username), Some(inline_password)) => Ok(Some(CredentialPair {
-                        username: inline_username.to_string(),
-                        password: inline_password.to_string(),
-                        source: CredentialSource::Inline,
-                    })),
-                    (Some(_), None) | (None, Some(_)) => {
-                        bail!(
-                            "設定ファイル内の資格情報はユーザー名とパスワードを両方指定してください"
-                        )
-                    }
-                    (None, None) => Ok(None),
-                },
+                (Some(_), None) | (None, Some(_)) => {
+                    // 片方だけ設定されている場合はインラインにフォールバックを試みる
+                    return try_inline_pair(inline_username, inline_password).or_else(|_| {
+                        bail!("環境変数 {u_env} / {p_env} はどちらか一方しか設定されていません")
+                    });
+                }
+                (None, None) => {
+                    // 環境変数が未設定ならインラインにフォールバック
+                    return try_inline_pair(inline_username, inline_password);
+                }
             }
         }
-        (Some(_), None) | (None, Some(_)) => match (inline_username, inline_password) {
-            (Some(inline_username), Some(inline_password)) => Ok(Some(CredentialPair {
-                username: inline_username.to_string(),
-                password: inline_password.to_string(),
-                source: CredentialSource::Inline,
-            })),
-            _ => bail!("環境変数名はユーザー名とパスワードを両方指定してください"),
-        },
-        (None, None) => match (inline_username, inline_password) {
-            (Some(inline_username), Some(inline_password)) => Ok(Some(CredentialPair {
-                username: inline_username.to_string(),
-                password: inline_password.to_string(),
-                source: CredentialSource::Inline,
-            })),
-            (Some(_), None) | (None, Some(_)) => {
-                bail!("設定ファイル内の資格情報はユーザー名とパスワードを両方指定してください")
-            }
-            (None, None) => Ok(None),
-        },
+        (Some(_), None) | (None, Some(_)) => {
+            // 環境変数名が片方だけ指定されているのは設定ミス。インラインで救済
+            return try_inline_pair(inline_username, inline_password)
+                .or_else(|_| bail!("環境変数名はユーザー名とパスワードを両方指定してください"));
+        }
+        (None, None) => {}
+    }
+
+    // 環境変数名が両方とも省略されている場合はインラインのみ
+    try_inline_pair(inline_username, inline_password)
+}
+
+fn try_inline_pair(
+    inline_username: Option<&str>,
+    inline_password: Option<&str>,
+) -> Result<Option<CredentialPair>> {
+    match (inline_username, inline_password) {
+        (Some(username), Some(password)) => Ok(Some(CredentialPair {
+            username: username.to_owned(),
+            password: password.to_owned(),
+            source: CredentialSource::Inline,
+        })),
+        (Some(_), None) | (None, Some(_)) => {
+            bail!("設定ファイル内の資格情報はユーザー名とパスワードを両方指定してください")
+        }
+        (None, None) => Ok(None),
     }
 }
 
@@ -729,5 +726,38 @@ fixture:
         assert!(basic.detail.contains("平文資格情報"));
         assert_eq!(office.level, "warn");
         assert!(office.detail.contains("平文資格情報"));
+    }
+
+    #[test]
+    fn resolve_credential_pair_returns_none_when_all_absent() {
+        let result = resolve_credential_pair(None, None, None, None);
+        assert!(result.expect("ok").is_none());
+    }
+
+    #[test]
+    fn resolve_credential_pair_uses_inline_when_no_env_names() {
+        let result = resolve_credential_pair(None, None, Some("user"), Some("pass"))
+            .expect("ok")
+            .expect("pair");
+        assert_eq!(result.username, "user");
+        assert_eq!(result.password, "pass");
+        assert_eq!(result.source, CredentialSource::Inline);
+    }
+
+    #[test]
+    fn resolve_credential_pair_errors_on_partial_inline() {
+        let result = resolve_credential_pair(None, None, Some("user"), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_credential_pair_errors_on_partial_env_name() {
+        // 環境変数名が片方だけ + インラインも両方なし → Ok(None)(インラインなしは中立)
+        // 環境変数名が片方だけ + インラインが片方だけ → エラー
+        let result = resolve_credential_pair(Some("USER_ENV"), None, Some("user"), None);
+        assert!(
+            result.is_err(),
+            "インラインが片方しかない場合はエラーになるべき"
+        );
     }
 }

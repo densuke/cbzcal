@@ -156,10 +156,13 @@ pub fn render_single_event(
 pub fn sanitize_terminal_output(input: &str) -> String {
     // 改行(\n, \r)とタブ(\t)以外の制御文字(ASCII < 0x20 や 0x7F 等)を除去します
     // 特にエスケープ(0x1B)を除去することでターミナル制御コードインジェクションを防ぎます
-    input.chars().filter(|c| {
-        let u = *c as u32;
-        !(u < 0x20 && *c != '\n' && *c != '\r' && *c != '\t') && u != 0x7F
-    }).collect()
+    input
+        .chars()
+        .filter(|c| {
+            let u = *c as u32;
+            !(u < 0x20 && *c != '\n' && *c != '\r' && *c != '\t') && u != 0x7F
+        })
+        .collect()
 }
 
 pub fn format_event_time(event: &CalendarEvent) -> String {
@@ -254,7 +257,10 @@ mod tests {
     #[test]
     fn renders_now_marker_and_highlight() {
         let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
-        let now = jst.with_ymd_and_hms(2026, 3, 9, 14, 0, 0).single().expect("now");
+        let now = jst
+            .with_ymd_and_hms(2026, 3, 9, 14, 0, 0)
+            .single()
+            .expect("now");
         let events = vec![
             CalendarEvent {
                 id: "e1@2026-03-09".to_string(),
@@ -272,8 +278,14 @@ mod tests {
                 id: "e2@2026-03-09".to_string(),
                 title: "今".to_string(),
                 description: None,
-                starts_at: jst.with_ymd_and_hms(2026, 3, 9, 13, 30, 0).single().unwrap(),
-                ends_at: jst.with_ymd_and_hms(2026, 3, 9, 14, 30, 0).single().unwrap(),
+                starts_at: jst
+                    .with_ymd_and_hms(2026, 3, 9, 13, 30, 0)
+                    .single()
+                    .unwrap(),
+                ends_at: jst
+                    .with_ymd_and_hms(2026, 3, 9, 14, 30, 0)
+                    .single()
+                    .unwrap(),
                 attendees: Vec::new(),
                 facility: None,
                 calendar: None,
@@ -296,8 +308,11 @@ mod tests {
 
         let rendered = render_event_list(&events, Some(now)).expect("render");
         assert!(rendered.contains("> 13:30-14:30  今 [e2@2026-03-09]"));
-        
-        let now_between = jst.with_ymd_and_hms(2026, 3, 9, 11, 0, 0).single().expect("now");
+
+        let now_between = jst
+            .with_ymd_and_hms(2026, 3, 9, 11, 0, 0)
+            .single()
+            .expect("now");
         let rendered_between = render_event_list(&events, Some(now_between)).expect("render");
         assert!(rendered_between.contains("--- 現在 (11:00) ---"));
     }
@@ -305,8 +320,59 @@ mod tests {
     #[test]
     fn sanitizes_terminal_control_characters() {
         assert_eq!(sanitize_terminal_output("Normal Text"), "Normal Text");
-        assert_eq!(sanitize_terminal_output("Escape\x1b[31mCode\x1b[0m"), "Escape[31mCode[0m");
-        assert_eq!(sanitize_terminal_output("Tab\tAnd\nNewline"), "Tab\tAnd\nNewline");
+        assert_eq!(
+            sanitize_terminal_output("Escape\x1b[31mCode\x1b[0m"),
+            "Escape[31mCode[0m"
+        );
+        assert_eq!(
+            sanitize_terminal_output("Tab\tAnd\nNewline"),
+            "Tab\tAnd\nNewline"
+        );
         assert_eq!(sanitize_terminal_output("Backspace\x08"), "Backspace");
+    }
+
+    #[test]
+    fn renders_empty_event_list() {
+        let rendered = render_event_list(&[], None).expect("render");
+        assert_eq!(rendered, "予定はありません");
+    }
+
+    #[test]
+    fn render_event_result_text_contains_action() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+        let event = CalendarEvent {
+            id: "sEID=100&UID=1&GID=1&Date=da.2026.3.9&BDate=da.2026.3.9".to_string(),
+            title: "テスト".to_string(),
+            description: None,
+            starts_at: jst.with_ymd_and_hms(2026, 3, 9, 10, 0, 0).single().unwrap(),
+            ends_at: jst.with_ymd_and_hms(2026, 3, 9, 11, 0, 0).single().unwrap(),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+        let result =
+            render_event_result("追加しました", "stub", &event, false, None).expect("render");
+        assert!(result.contains("追加しました"));
+        assert!(result.contains("テスト"));
+    }
+
+    #[test]
+    fn format_event_time_all_day() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("jst");
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "終日予定".to_string(),
+            description: None,
+            starts_at: jst.with_ymd_and_hms(2026, 3, 9, 0, 0, 0).single().unwrap(),
+            ends_at: jst.with_ymd_and_hms(2026, 3, 10, 0, 0, 0).single().unwrap(),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+        assert_eq!(format_event_time(&event), "終日");
     }
 }

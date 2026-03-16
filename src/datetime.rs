@@ -288,6 +288,7 @@ pub fn parse_prompt_timestamp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     fn anchor() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 3, 9).expect("date")
@@ -311,5 +312,109 @@ mod tests {
             parse_flexible_date("-1w", anchor()).expect("date"),
             NaiveDate::from_ymd_opt(2026, 3, 2).expect("date")
         );
+    }
+
+    #[test]
+    fn parse_time_of_day_with_colon() {
+        assert_eq!(parse_time_of_day("9:30").expect("time"), (9, 30));
+        assert_eq!(parse_time_of_day("13:00").expect("time"), (13, 0));
+    }
+
+    #[test]
+    fn parse_time_of_day_integer_only() {
+        assert_eq!(parse_time_of_day("9").expect("time"), (9, 0));
+        assert_eq!(parse_time_of_day("23").expect("time"), (23, 0));
+    }
+
+    #[test]
+    fn parse_time_of_day_rejects_out_of_range() {
+        assert!(parse_time_of_day("24").is_err());
+        assert!(parse_time_of_day("9:60").is_err());
+    }
+
+    #[test]
+    fn parse_duration_days() {
+        assert_eq!(parse_duration("7d").expect("duration"), TimeDelta::days(7));
+    }
+
+    #[test]
+    fn parse_duration_rejects_empty() {
+        assert!(parse_duration("").is_err());
+    }
+
+    #[test]
+    fn parse_duration_rejects_zero() {
+        assert!(parse_duration("0h").is_err());
+    }
+
+    #[test]
+    fn normalize_prompt_time_converts_japanese_units() {
+        assert_eq!(normalize_prompt_time("17時半"), "17:30");
+        // "9時" → "9:" の後、末尾コロン除去で "9" になる
+        assert_eq!(normalize_prompt_time("9時"), "9");
+    }
+
+    #[test]
+    fn normalize_prompt_time_strips_timezone_offset() {
+        assert_eq!(normalize_prompt_time("09:00+09:00"), "09:00");
+    }
+
+    #[test]
+    fn strip_trailing_timezone_offset_removes_offset() {
+        assert_eq!(strip_trailing_timezone_offset("09:00+09:00"), "09:00");
+        assert_eq!(strip_trailing_timezone_offset("short"), "short");
+    }
+
+    #[test]
+    fn normalize_prompt_duration_converts_japanese() {
+        assert_eq!(normalize_prompt_duration("2時間30分"), "2h30m");
+        assert_eq!(normalize_prompt_duration("1時間"), "1h");
+    }
+
+    #[test]
+    fn weekday_abbr_all_days() {
+        use chrono::Weekday;
+        assert_eq!(weekday_abbr(Weekday::Mon), "Mon");
+        assert_eq!(weekday_abbr(Weekday::Tue), "Tue");
+        assert_eq!(weekday_abbr(Weekday::Wed), "Wed");
+        assert_eq!(weekday_abbr(Weekday::Thu), "Thu");
+        assert_eq!(weekday_abbr(Weekday::Fri), "Fri");
+        assert_eq!(weekday_abbr(Weekday::Sat), "Sat");
+        assert_eq!(weekday_abbr(Weekday::Sun), "Sun");
+    }
+
+    #[test]
+    fn parse_flexible_date_today_tomorrow_yesterday() {
+        assert_eq!(
+            parse_flexible_date("today", anchor()).expect("today"),
+            anchor()
+        );
+        let tomorrow = anchor().succ_opt().expect("tomorrow");
+        assert_eq!(
+            parse_flexible_date("tomorrow", anchor()).expect("tomorrow"),
+            tomorrow
+        );
+        let yesterday = anchor().pred_opt().expect("yesterday");
+        assert_eq!(
+            parse_flexible_date("yesterday", anchor()).expect("yesterday"),
+            yesterday
+        );
+    }
+
+    #[test]
+    fn parse_flexible_date_month_day_short() {
+        let expected = NaiveDate::from_ymd_opt(2026, 3, 15).expect("date");
+        assert_eq!(
+            parse_flexible_date("3/15", anchor()).expect("date"),
+            expected
+        );
+    }
+
+    #[test]
+    fn to_jst_datetime_builds_correctly() {
+        let date = NaiveDate::from_ymd_opt(2026, 3, 9).expect("date");
+        let dt = to_jst_datetime(date, 9, 30).expect("dt");
+        assert_eq!(dt.hour(), 9);
+        assert_eq!(dt.minute(), 30);
     }
 }

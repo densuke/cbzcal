@@ -1039,4 +1039,483 @@ mod tests {
         assert_eq!(normalized.all_day, Some(true));
         assert!(normalized.id.is_none());
     }
+
+    fn make_plan(action: PromptActionWire) -> PromptPlan {
+        PromptPlan {
+            action,
+            id: None,
+            title: None,
+            title_suffix: None,
+            date: None,
+            from: None,
+            to: None,
+            at: None,
+            until: None,
+            duration: None,
+            all_day: None,
+            description: None,
+            clear_description: None,
+            start: None,
+            end: None,
+            visibility: None,
+            scope: None,
+            web: None,
+            preserve_time: None,
+        }
+    }
+
+    #[test]
+    fn render_preview_formats_output() {
+        let execution = PromptExecution {
+            action: PromptAction::Delete,
+            command: EventsCommand::Delete(DeleteArgs {
+                id: "abc@2026-03-09".to_string(),
+                scope: None,
+                json: false,
+            }),
+            shell_command: "cbzcal events delete --id abc@2026-03-09".to_string(),
+            summary_lines: vec![
+                "action: delete".to_string(),
+                "id: abc@2026-03-09".to_string(),
+            ],
+        };
+        let output = render_preview(&execution);
+        assert!(output.contains("解釈結果:"));
+        assert!(output.contains("action: delete"));
+        assert!(output.contains("実行コマンド:"));
+        assert!(output.contains("cbzcal events delete"));
+    }
+
+    #[test]
+    fn apply_scope_from_arg_all_variants() {
+        assert_eq!(apply_scope_from_arg(None), None);
+        assert_eq!(
+            apply_scope_from_arg(Some(ApplyScopeArg::This)),
+            Some(ApplyScope::This)
+        );
+        assert_eq!(
+            apply_scope_from_arg(Some(ApplyScopeArg::After)),
+            Some(ApplyScope::After)
+        );
+        assert_eq!(
+            apply_scope_from_arg(Some(ApplyScopeArg::All)),
+            Some(ApplyScope::All)
+        );
+    }
+
+    #[test]
+    fn build_delete_execution_creates_correct_command() {
+        let mut plan = make_plan(PromptActionWire::Delete);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.scope = Some("this".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        assert!(matches!(execution.action, PromptAction::Delete));
+        assert!(execution.shell_command.contains("delete"));
+        assert!(execution.shell_command.contains("--id abc@2026-03-09"));
+        assert!(execution.shell_command.contains("--scope this"));
+        let summary = execution.summary_lines.join("\n");
+        assert!(summary.contains("action: delete"));
+        assert!(summary.contains("id: abc@2026-03-09"));
+    }
+
+    #[test]
+    fn build_delete_execution_errors_without_id() {
+        let plan = make_plan(PromptActionWire::Delete);
+        let result = build_execution(plan, anchor(), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("id"));
+    }
+
+    #[test]
+    fn build_clone_execution_with_title_suffix() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.title_suffix = Some("(コピー)".to_string());
+        plan.date = Some("tomorrow".to_string());
+        plan.at = Some("10:00".to_string());
+        plan.duration = Some("1h".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        assert!(matches!(execution.action, PromptAction::Clone));
+        assert!(execution.shell_command.contains("clone"));
+        assert!(execution.shell_command.contains("--title-suffix"));
+        let summary = execution.summary_lines.join("\n");
+        assert!(summary.contains("action: clone"));
+        assert!(summary.contains("title_suffix: (コピー)"));
+    }
+
+    #[test]
+    fn build_clone_execution_errors_without_id() {
+        let plan = make_plan(PromptActionWire::Clone);
+        let result = build_execution(plan, anchor(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_list_execution_with_date_range() {
+        let mut plan = make_plan(PromptActionWire::List);
+        plan.from = Some("2026-03-09".to_string());
+        plan.to = Some("2026-03-16".to_string());
+        plan.duration = Some("7d".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        assert!(matches!(execution.action, PromptAction::List));
+        assert!(execution.shell_command.contains("list"));
+        assert!(execution.shell_command.contains("--from"));
+        assert!(execution.shell_command.contains("--to"));
+        assert!(execution.shell_command.contains("--for"));
+    }
+
+    #[test]
+    fn build_list_execution_with_date_only() {
+        let mut plan = make_plan(PromptActionWire::List);
+        plan.date = Some("today".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        let summary = execution.summary_lines.join("\n");
+        assert!(summary.contains("date: today"));
+    }
+
+    #[test]
+    fn shell_escape_handles_various_strings() {
+        assert_eq!(shell_escape(""), "''");
+        assert_eq!(shell_escape("safe-string"), "safe-string");
+        assert_eq!(
+            shell_escape("2026-03-10T17:30:00+09:00"),
+            "'2026-03-10T17:30:00+09:00'"
+        );
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+        assert_eq!(shell_escape("it's"), "'it'\"'\"'s'");
+    }
+
+    #[test]
+    fn parse_scope_arg_valid_values() {
+        assert!(matches!(parse_scope_arg(None), Ok(None)));
+        assert!(matches!(
+            parse_scope_arg(Some("this")),
+            Ok(Some(ApplyScopeArg::This))
+        ));
+        assert!(matches!(
+            parse_scope_arg(Some("after")),
+            Ok(Some(ApplyScopeArg::After))
+        ));
+        assert!(matches!(
+            parse_scope_arg(Some("all")),
+            Ok(Some(ApplyScopeArg::All))
+        ));
+    }
+
+    #[test]
+    fn parse_scope_arg_rejects_invalid_value() {
+        let result = parse_scope_arg(Some("invalid"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_visibility_rejects_invalid_value() {
+        let result = parse_visibility(Some("secret"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn infer_visibility_from_prompt_detects_public() {
+        assert_eq!(
+            infer_visibility_from_prompt("この予定は公開で登録してください"),
+            Some("public".to_string())
+        );
+    }
+
+    #[test]
+    fn infer_visibility_public_not_matched_when_negated() {
+        assert_eq!(infer_visibility_from_prompt("公開しない"), None);
+        assert_eq!(
+            infer_visibility_from_prompt("非公開"),
+            Some("private".to_string())
+        );
+    }
+
+    #[test]
+    fn infer_date_handles_日付後日() {
+        let result = infer_date_from_prompt("明後日15時にミーティング", anchor());
+        assert_eq!(result, Some("2026-03-11".to_string()));
+    }
+
+    #[test]
+    fn infer_date_handles_slash_format() {
+        let result = infer_date_from_prompt("3/15の10時から", anchor());
+        assert_eq!(result, Some("2026-03-15".to_string()));
+    }
+
+    #[test]
+    fn infer_date_handles_day_only() {
+        let result = infer_date_from_prompt("25日に予定を追加", anchor());
+        assert_eq!(result, Some("2026-03-25".to_string()));
+    }
+
+    #[test]
+    fn infer_date_day_rolls_to_next_month_when_past() {
+        // anchor は March 9 なので 5日 はすでに過ぎている → 4月5日
+        let result = infer_date_from_prompt("5日に予定を追加", anchor());
+        assert_eq!(result, Some("2026-04-05".to_string()));
+    }
+
+    #[test]
+    fn extract_quoted_handles_various_styles() {
+        assert_eq!(
+            infer_title_from_prompt("「会議」を追加"),
+            Some("会議".to_string())
+        );
+        assert_eq!(
+            infer_title_from_prompt("『報告会』を追加"),
+            Some("報告会".to_string())
+        );
+        assert_eq!(infer_title_from_prompt("何も引用なし"), None);
+    }
+
+    #[test]
+    fn parse_prompt_plan_strips_markdown_fence() {
+        let json = "```json\n{\"action\":\"list\"}\n```";
+        let plan = parse_prompt_plan(json).expect("plan");
+        assert!(matches!(plan.action, PromptActionWire::List));
+    }
+
+    #[test]
+    fn parse_prompt_plan_plain_json() {
+        let plan = parse_prompt_plan(r#"{"action":"add","title":"打ち合わせ"}"#).expect("plan");
+        assert!(matches!(plan.action, PromptActionWire::Add));
+        assert_eq!(plan.title.as_deref(), Some("打ち合わせ"));
+    }
+
+    #[test]
+    fn parse_prompt_plan_invalid_json_returns_error() {
+        let result = parse_prompt_plan("not json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn supports_yes_is_false_for_update_and_delete() {
+        let make_exec = |action: PromptAction| PromptExecution {
+            action,
+            command: EventsCommand::List(ListArgs {
+                from: None,
+                to: None,
+                date: None,
+                duration: None,
+                json: false,
+            }),
+            shell_command: String::new(),
+            summary_lines: Vec::new(),
+        };
+        assert!(!make_exec(PromptAction::Update).supports_yes());
+        assert!(!make_exec(PromptAction::Delete).supports_yes());
+        assert!(make_exec(PromptAction::Add).supports_yes());
+        assert!(make_exec(PromptAction::Clone).supports_yes());
+        assert!(make_exec(PromptAction::List).supports_yes());
+    }
+
+    #[test]
+    fn resolve_target_window_all_day_returns_midnight() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.date = Some("2026-03-15".to_string());
+        plan.all_day = Some(true);
+        let (start, end) = resolve_target_window(&plan, anchor()).expect("window");
+        assert_eq!(
+            start.expect("start").to_rfc3339(),
+            "2026-03-15T00:00:00+09:00"
+        );
+        assert_eq!(end.expect("end").to_rfc3339(), "2026-03-16T00:00:00+09:00");
+    }
+
+    #[test]
+    fn resolve_target_window_with_until() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.date = Some("2026-03-15".to_string());
+        plan.at = Some("10:00".to_string());
+        plan.until = Some("12:00".to_string());
+        let (start, end) = resolve_target_window(&plan, anchor()).expect("window");
+        assert_eq!(
+            start.expect("start").to_rfc3339(),
+            "2026-03-15T10:00:00+09:00"
+        );
+        assert_eq!(end.expect("end").to_rfc3339(), "2026-03-15T12:00:00+09:00");
+    }
+
+    #[test]
+    fn resolve_target_window_with_duration() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.date = Some("2026-03-15".to_string());
+        plan.at = Some("14:00".to_string());
+        plan.duration = Some("2h".to_string());
+        let (start, end) = resolve_target_window(&plan, anchor()).expect("window");
+        assert_eq!(
+            start.expect("start").to_rfc3339(),
+            "2026-03-15T14:00:00+09:00"
+        );
+        assert_eq!(end.expect("end").to_rfc3339(), "2026-03-15T16:00:00+09:00");
+    }
+
+    #[test]
+    fn resolve_target_window_no_date_returns_none() {
+        let plan = make_plan(PromptActionWire::Clone);
+        let (start, end) = resolve_target_window(&plan, anchor()).expect("window");
+        assert!(start.is_none());
+        assert!(end.is_none());
+    }
+
+    #[test]
+    fn resolve_target_window_errors_date_at_without_end() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.date = Some("2026-03-15".to_string());
+        plan.at = Some("10:00".to_string());
+        let result = resolve_target_window(&plan, anchor());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_target_window_errors_date_without_at() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.date = Some("2026-03-15".to_string());
+        // no at, no all_day → error
+        let result = resolve_target_window(&plan, anchor());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn prompt_mentions_explicit_id_keywords() {
+        assert!(prompt_mentions_explicit_id("ID:abc-123 を削除"));
+        assert!(prompt_mentions_explicit_id("このid を…"));
+        assert!(!prompt_mentions_explicit_id("明日の予定を削除"));
+    }
+
+    #[test]
+    fn prompt_implies_add_keywords() {
+        assert!(prompt_implies_add("明日15時に予定を追加"));
+        assert!(prompt_implies_add("打ち合わせを登録してください"));
+        assert!(prompt_implies_add("リマインダーを設定する"));
+        assert!(!prompt_implies_add("明日の予定を確認"));
+    }
+
+    #[test]
+    fn looks_like_date_expression_matches_keywords() {
+        assert!(looks_like_date_expression("今日", anchor()));
+        assert!(looks_like_date_expression("明日", anchor()));
+        assert!(looks_like_date_expression("明後日", anchor()));
+        assert!(!looks_like_date_expression("abc123", anchor()));
+    }
+
+    #[test]
+    fn scope_name_all_variants() {
+        assert_eq!(scope_name(ApplyScopeArg::This), "this");
+        assert_eq!(scope_name(ApplyScopeArg::After), "after");
+        assert_eq!(scope_name(ApplyScopeArg::All), "all");
+    }
+
+    #[test]
+    fn build_update_execution_errors_without_id() {
+        let mut plan = make_plan(PromptActionWire::Update);
+        plan.title = Some("新しいタイトル".to_string());
+        let result = build_execution(plan, anchor(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_add_execution_errors_without_title() {
+        let mut plan = make_plan(PromptActionWire::Add);
+        plan.date = Some("tomorrow".to_string());
+        let result = build_execution(plan, anchor(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_add_execution_private_all_day() {
+        let mut plan = make_plan(PromptActionWire::Add);
+        plan.title = Some("プライベート予定".to_string());
+        plan.date = Some("tomorrow".to_string());
+        plan.all_day = Some(true);
+        plan.visibility = Some("private".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        let EventsCommand::Add(args) = execution.command else {
+            panic!("add")
+        };
+        assert!(args.private);
+        assert!(!args.public);
+        assert!(args.all_day);
+        assert!(
+            execution
+                .summary_lines
+                .iter()
+                .any(|l| l.contains("all_day"))
+        );
+    }
+
+    #[test]
+    fn build_update_with_description_and_web_and_scope() {
+        let mut plan = make_plan(PromptActionWire::Update);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.title = Some("新タイトル".to_string());
+        plan.description = Some("詳細".to_string());
+        plan.scope = Some("after".to_string());
+        plan.web = Some(true);
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        assert!(matches!(execution.action, PromptAction::Update));
+        assert!(execution.shell_command.contains("--scope after"));
+        assert!(execution.shell_command.contains("--description"));
+        assert!(execution.shell_command.contains("--web"));
+        let summary = execution.summary_lines.join("\n");
+        assert!(summary.contains("web: true"));
+        assert!(summary.contains("scope: after"));
+    }
+
+    #[test]
+    fn preserve_time_errors_without_existing_event() {
+        let mut plan = make_plan(PromptActionWire::Update);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.date = Some("tomorrow".to_string());
+        plan.preserve_time = Some(true);
+        let result = build_execution(plan, anchor(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn preserve_time_errors_without_date() {
+        let ev = event();
+        let mut plan = make_plan(PromptActionWire::Update);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.preserve_time = Some(true);
+        // date は省略
+        let result = build_execution(plan, anchor(), Some(&ev));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_update_times_with_at_and_until() {
+        let mut plan = make_plan(PromptActionWire::Update);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.date = Some("2026-03-15".to_string());
+        plan.at = Some("9:00".to_string());
+        plan.until = Some("10:30".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        let EventsCommand::Update(args) = execution.command else {
+            panic!("update")
+        };
+        assert_eq!(
+            args.start.expect("start").to_rfc3339(),
+            "2026-03-15T09:00:00+09:00"
+        );
+        assert_eq!(
+            args.end.expect("end").to_rfc3339(),
+            "2026-03-15T10:30:00+09:00"
+        );
+    }
+
+    #[test]
+    fn build_clone_with_explicit_start_end() {
+        let mut plan = make_plan(PromptActionWire::Clone);
+        plan.id = Some("abc@2026-03-09".to_string());
+        plan.title = Some("クローン".to_string());
+        plan.start = Some("2026-03-15T10:00:00+09:00".to_string());
+        plan.end = Some("2026-03-15T11:00:00+09:00".to_string());
+        let execution = build_execution(plan, anchor(), None).expect("execution");
+        assert!(execution.shell_command.contains("--start"));
+        assert!(execution.shell_command.contains("--end"));
+        let summary = execution.summary_lines.join("\n");
+        assert!(summary.contains("title: クローン"));
+    }
 }

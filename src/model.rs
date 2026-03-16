@@ -265,4 +265,111 @@ mod tests {
         assert!(event.overlaps(Some(ts("2026-03-09T00:00:00+09:00")), None));
         assert!(event.overlaps(None, Some(ts("2026-03-09T12:00:00+09:00"))));
     }
+
+    #[test]
+    fn apply_patch_updates_title_and_increments_version() {
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "旧タイトル".to_string(),
+            description: None,
+            starts_at: ts("2026-03-09T09:00:00+09:00"),
+            ends_at: ts("2026-03-09T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+        let patch = EventPatch {
+            title: Some("新タイトル".to_string()),
+            ..Default::default()
+        };
+        let updated = event.apply_patch(&patch).expect("patch");
+        assert_eq!(updated.title, "新タイトル");
+        assert_eq!(updated.version, 2);
+    }
+
+    #[test]
+    fn apply_patch_rejects_inverted_time_range() {
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "T".to_string(),
+            description: None,
+            starts_at: ts("2026-03-09T09:00:00+09:00"),
+            ends_at: ts("2026-03-09T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+        let patch = EventPatch {
+            ends_at: Some(ts("2026-03-09T08:00:00+09:00")),
+            ..Default::default()
+        };
+        assert!(event.apply_patch(&patch).is_err());
+    }
+
+    #[test]
+    fn is_ongoing_and_is_passed() {
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "T".to_string(),
+            description: None,
+            starts_at: ts("2026-03-09T09:00:00+09:00"),
+            ends_at: ts("2026-03-09T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+
+        let during = ts("2026-03-09T09:30:00+09:00");
+        let before = ts("2026-03-09T08:00:00+09:00");
+        let after = ts("2026-03-09T11:00:00+09:00");
+
+        assert!(event.is_ongoing(during));
+        assert!(!event.is_ongoing(before));
+        assert!(!event.is_ongoing(after));
+        assert!(event.is_passed(after));
+        assert!(!event.is_passed(during));
+    }
+
+    #[test]
+    fn clone_with_overrides_applies_title_suffix() {
+        let event = CalendarEvent {
+            id: "1".to_string(),
+            title: "元タイトル".to_string(),
+            description: None,
+            starts_at: ts("2026-03-09T09:00:00+09:00"),
+            ends_at: ts("2026-03-09T10:00:00+09:00"),
+            attendees: Vec::new(),
+            facility: None,
+            calendar: None,
+            visibility: EventVisibility::Public,
+            version: 1,
+        };
+        let overrides = CloneOverrides {
+            title_suffix: Some(" (複製)".to_string()),
+            ..Default::default()
+        };
+        let cloned = event
+            .clone_with_overrides(&overrides, "2".to_string())
+            .expect("clone");
+        assert_eq!(cloned.title, "元タイトル (複製)");
+        assert_eq!(cloned.id, "2");
+        assert_eq!(cloned.version, 1);
+    }
+
+    #[test]
+    fn event_patch_is_empty_check() {
+        let empty = EventPatch::default();
+        assert!(empty.is_empty());
+        let with_title = EventPatch {
+            title: Some("T".to_string()),
+            ..Default::default()
+        };
+        assert!(!with_title.is_empty());
+    }
 }

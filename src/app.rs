@@ -3,7 +3,6 @@ use std::io::{self, Write};
 use anyhow::{Result, bail};
 use chrono::{Datelike, FixedOffset, TimeZone};
 
-use clap::CommandFactory;
 use crate::{
     backend::{
         CalendarBackend, CybozuHtmlBackend, ListQuery, build_backend,
@@ -17,6 +16,7 @@ use crate::{
     prompt::{plan_prompt, render_preview},
     view::render_json,
 };
+use clap::CommandFactory;
 
 pub fn execute(cli: Cli) -> Result<String> {
     let loaded = AppConfig::load_with_resolution(cli.config.as_deref())?;
