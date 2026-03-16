@@ -40,10 +40,10 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     Doctor,
     ProbeLogin,
-    #[allow(clippy::large_enum_variant)]
     Events(EventsArgs),
     #[command(about = "シェル補完コードを出力する")]
     Shell {
@@ -93,8 +93,8 @@ impl EventsArgs {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ResolvedEventsArgs {
-    #[allow(clippy::large_enum_variant)]
     Command(EventsCommand),
     Prompt(PromptArgs),
 }

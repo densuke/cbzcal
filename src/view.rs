@@ -54,6 +54,7 @@ pub fn render_event_result(
     }
 }
 
+#[allow(clippy::collapsible_if)]
 pub fn render_event_list(
     events: &[CalendarEvent],
     now: Option<chrono::DateTime<chrono::FixedOffset>>,
